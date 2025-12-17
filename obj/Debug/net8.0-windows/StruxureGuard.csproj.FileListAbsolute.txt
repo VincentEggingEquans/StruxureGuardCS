@@ -1,0 +1,14 @@
+C:\StruxureGuard\StruxureGuard-CS\StruxureGuard\obj\Debug\net8.0-windows\StruxureGuard.GeneratedMSBuildEditorConfig.editorconfig
+C:\StruxureGuard\StruxureGuard-CS\StruxureGuard\obj\Debug\net8.0-windows\StruxureGuard.AssemblyInfoInputs.cache
+C:\StruxureGuard\StruxureGuard-CS\StruxureGuard\obj\Debug\net8.0-windows\StruxureGuard.AssemblyInfo.cs
+C:\StruxureGuard\StruxureGuard-CS\StruxureGuard\obj\Debug\net8.0-windows\StruxureGuard.csproj.CoreCompileInputs.cache
+C:\StruxureGuard\StruxureGuard-CS\StruxureGuard\bin\Debug\net8.0-windows\StruxureGuard.exe
+C:\StruxureGuard\StruxureGuard-CS\StruxureGuard\bin\Debug\net8.0-windows\StruxureGuard.deps.json
+C:\StruxureGuard\StruxureGuard-CS\StruxureGuard\bin\Debug\net8.0-windows\StruxureGuard.runtimeconfig.json
+C:\StruxureGuard\StruxureGuard-CS\StruxureGuard\bin\Debug\net8.0-windows\StruxureGuard.dll
+C:\StruxureGuard\StruxureGuard-CS\StruxureGuard\bin\Debug\net8.0-windows\StruxureGuard.pdb
+C:\StruxureGuard\StruxureGuard-CS\StruxureGuard\obj\Debug\net8.0-windows\StruxureGuard.dll
+C:\StruxureGuard\StruxureGuard-CS\StruxureGuard\obj\Debug\net8.0-windows\refint\StruxureGuard.dll
+C:\StruxureGuard\StruxureGuard-CS\StruxureGuard\obj\Debug\net8.0-windows\StruxureGuard.pdb
+C:\StruxureGuard\StruxureGuard-CS\StruxureGuard\obj\Debug\net8.0-windows\StruxureGuard.genruntimeconfig.cache
+C:\StruxureGuard\StruxureGuard-CS\StruxureGuard\obj\Debug\net8.0-windows\ref\StruxureGuard.dll
