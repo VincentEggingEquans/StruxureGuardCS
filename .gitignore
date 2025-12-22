@@ -3,6 +3,7 @@ bin/
 obj/
 TESTS/
 _chatgpt_export/
+OLD/
 
 # Visual Studio
 .vs/
