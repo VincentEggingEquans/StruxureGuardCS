@@ -2,7 +2,7 @@ using StruxureGuard.Core.Logging;
 using StruxureGuard.Core.Tools.Infrastructure;
 using StruxureGuard.Core.Tools;
 
-namespace StruxureGuard.Tools.Mkdir;
+namespace StruxureGuard.Core.Tools.Mkdir;
 
 public sealed class MkdirTool : ITool
 {

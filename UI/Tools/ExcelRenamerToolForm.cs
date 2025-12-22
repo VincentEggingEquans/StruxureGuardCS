@@ -1,6 +1,6 @@
 namespace StruxureGuard.UI.Tools;
 
-public sealed class ExcelRenamerToolForm : ToolFormBase
+public sealed class ExcelRenamerToolForm : PlaceholderToolFormBase
 {
     public ExcelRenamerToolForm() : base(
         "ExcelRenamer",

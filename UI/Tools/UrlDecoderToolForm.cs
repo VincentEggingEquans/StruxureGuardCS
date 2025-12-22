@@ -1,6 +1,6 @@
 namespace StruxureGuard.UI.Tools;
 
-public sealed class UrlDecoderToolForm : ToolFormBase
+public sealed class UrlDecoderToolForm : PlaceholderToolFormBase
 {
     public UrlDecoderToolForm() : base(
         "URL Decoder",

@@ -1,7 +1,7 @@
 namespace StruxureGuard.UI.Tools;
 
 
-public sealed class AspPathCheckerToolForm : ToolFormBase
+public sealed class AspPathCheckerToolForm : PlaceholderToolFormBase
 {
     public AspPathCheckerToolForm() : base(
         "ASP Path Checker",

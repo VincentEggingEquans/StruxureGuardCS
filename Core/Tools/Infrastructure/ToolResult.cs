@@ -4,6 +4,7 @@ public sealed class ToolResult
 {
     public bool Success { get; init; }
     public bool Canceled { get; init; }
+    public bool BlockedByValidation { get; init; }
     public string Summary { get; init; } = "";
 
     // New: warnings (non-fatal issues)

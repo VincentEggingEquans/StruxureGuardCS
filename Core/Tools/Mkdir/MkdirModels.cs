@@ -1,4 +1,4 @@
-namespace StruxureGuard.Tools.Mkdir;
+namespace StruxureGuard.Core.Tools.Mkdir;
 
 public enum AutoNumberFormat
 {

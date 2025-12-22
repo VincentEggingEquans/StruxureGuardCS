@@ -1,6 +1,6 @@
 namespace StruxureGuard.UI.Tools;
 
-public sealed class LineConverterToolForm : ToolFormBase
+public sealed class LineConverterToolForm : PlaceholderToolFormBase
 {
     public LineConverterToolForm() : base(
         "Lineconverter",

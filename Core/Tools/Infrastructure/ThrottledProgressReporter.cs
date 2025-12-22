@@ -22,7 +22,8 @@ public sealed class ThrottledProgressReporter<T> : IProgress<T>, IDisposable
     private T _pending = default!;
 
     // Explicit System.Threading.Timer (not WinForms Timer)
-    private System.Threading.Timer _timer;
+    private System.Threading.Timer? _timer;
+
 
     private bool _disposed;
 

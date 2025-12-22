@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using StruxureGuard.Core.Logging;
 
-namespace StruxureGuard.Tools.Mkdir;
+namespace StruxureGuard.Core.Tools.Mkdir;
 
 public static class MkdirEngine
 {

@@ -9,9 +9,9 @@ namespace StruxureGuard.UI.Tools;
 /// Placeholder tool window (compile-ready).
 /// Use for tools that are not yet migrated to the runner infrastructure.
 /// </summary>
-public abstract class ToolFormBase : Form
+public abstract class PlaceholderToolFormBase : Form
 {
-    protected ToolFormBase(string title, string description, string logTag = "tool")
+    protected PlaceholderToolFormBase(string title, string description, string logTag = "tool")
     {
         Text = title;
         Width = 860;

@@ -50,7 +50,8 @@ public abstract class ToolBaseForm : Form
         _isRunning = true;
         UpdateUiRunningState(true);
 
-        var ctx = new ToolRunContext(toolKey: tool.ToolKey, parameters: parameters, cancellationToken: ct);
+        var ctx = new ToolRunContext(toolKey: tool.ToolKey, parameters: parameters);
+
 
         var uiProgress = new Progress<ToolProgressInfo>(p => OnProgress(p));
         using var throttled = new ThrottledProgressReporter<ToolProgressInfo>(uiProgress, TimeSpan.FromMilliseconds(75));
@@ -102,7 +103,7 @@ public abstract class ToolBaseForm : Form
 
         if (!result.Success)
         {
-            if (string.Equals(result.Summary, "Validation failed", StringComparison.OrdinalIgnoreCase))
+            if (result.BlockedByValidation)
             {
                 Log.Warn(toolLogTag, $"Tool blocked by validation. ms={result.DurationMs}");
                 MessageBox.Show(this,

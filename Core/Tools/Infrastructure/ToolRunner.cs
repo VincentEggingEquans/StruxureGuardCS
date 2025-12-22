@@ -23,6 +23,7 @@ public static class ToolRunner
             {
                 Success = result.Success,
                 Canceled = result.Canceled,
+                BlockedByValidation = result.BlockedByValidation,
                 Summary = result.Summary,
                 StartedUtc = startedUtc,
                 FinishedUtc = finishedUtc,
@@ -55,6 +56,7 @@ public static class ToolRunner
                 {
                     Success = false,
                     Canceled = false,
+                    BlockedByValidation = true,
                     Summary = "Validation failed"
                 }.WithWarnings(validation.Warnings.Select(w => $"{w.Code}: {w.Message}"));
 

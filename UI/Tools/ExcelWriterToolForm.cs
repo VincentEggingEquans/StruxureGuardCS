@@ -1,6 +1,6 @@
 namespace StruxureGuard.UI.Tools;
 
-public sealed class ExcelWriterToolForm : ToolFormBase
+public sealed class ExcelWriterToolForm : PlaceholderToolFormBase
 {
     public ExcelWriterToolForm() : base(
         "ExcelWriter",

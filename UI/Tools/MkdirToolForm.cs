@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using StruxureGuard.Core.Logging;
 using StruxureGuard.Styling;
-using StruxureGuard.Tools.Mkdir;
+using StruxureGuard.Core.Tools.Mkdir;
 using StruxureGuard.UI.Controls;
 using StruxureGuard.Core.Tools.Infrastructure;
 

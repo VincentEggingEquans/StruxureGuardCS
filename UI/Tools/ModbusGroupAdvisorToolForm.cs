@@ -1,6 +1,6 @@
 namespace StruxureGuard.UI.Tools;
 
-public sealed class ModbusGroupAdvisorToolForm : ToolFormBase
+public sealed class ModbusGroupAdvisorToolForm : PlaceholderToolFormBase
 {
     public ModbusGroupAdvisorToolForm() : base(
         "Modbus Group Advisor",
