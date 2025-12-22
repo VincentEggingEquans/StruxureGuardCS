@@ -1,6 +1,7 @@
 using StruxureGuard.Core.Logging;
 using StruxureGuard.Styling;
 using StruxureGuard.UI;
+using StruxureGuard.UI.Hotkeys;
 
 namespace StruxureGuard;
 
@@ -15,6 +16,9 @@ internal static class Program
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "StruxureGuard",
             "Logs"));
+
+        var debugLogHost = new DebugLogHost();
+        Application.AddMessageFilter(new GlobalHotkeyFilter(debugLogHost.OpenOrActivate));
 
         ThemePresets.RegisterAll();
         ThemeManager.LoadAtStartup();

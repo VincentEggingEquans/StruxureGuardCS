@@ -28,13 +28,34 @@ public abstract class ToolBaseForm : Form
     protected void CancelRun()
     {
         if (!_isRunning) return;
-        Log.Info("tool-ui", $"{GetType().Name} cancel requested");
+        Log.Info(ToolLogTags.Ui, $"{GetType().Name} cancel requested");
         try { _cts?.Cancel(); } catch { }
     }
 
-    protected async Task<ToolResult> RunToolAsync(
+    // Existing signature stays (backwards compatible)
+    protected Task<ToolResult> RunToolAsync(
         ITool tool,
         Dictionary<string, string> parameters,
+        string toolLogTag,
+        Func<ToolResult, Task>? onCompleted = null,
+        bool showWarningsOnSuccess = false,
+        Func<ToolResult, string?>? successMessageFactory = null)
+    {
+        // Delegate to the ToolParameters overload
+        var p = ToolParameters.From(parameters);
+        return RunToolAsync(
+            tool: tool,
+            parameters: p,
+            toolLogTag: toolLogTag,
+            onCompleted: onCompleted,
+            showWarningsOnSuccess: showWarningsOnSuccess,
+            successMessageFactory: successMessageFactory);
+    }
+
+    // New preferred overload (Step 13)
+    protected async Task<ToolResult> RunToolAsync(
+        ITool tool,
+        ToolParameters parameters,
         string toolLogTag,
         Func<ToolResult, Task>? onCompleted = null,
         bool showWarningsOnSuccess = false,
@@ -51,7 +72,6 @@ public abstract class ToolBaseForm : Form
         UpdateUiRunningState(true);
 
         var ctx = new ToolRunContext(toolKey: tool.ToolKey, parameters: parameters);
-
 
         var uiProgress = new Progress<ToolProgressInfo>(p => OnProgress(p));
         using var throttled = new ThrottledProgressReporter<ToolProgressInfo>(uiProgress, TimeSpan.FromMilliseconds(75));
@@ -74,7 +94,6 @@ public abstract class ToolBaseForm : Form
         if (onCompleted != null)
             await onCompleted(result);
 
-        // ✅ Centralized result handling (optional, but default is useful)
         await HandleToolResultAsync(
             toolLogTag: toolLogTag,
             result: result,
@@ -85,7 +104,7 @@ public abstract class ToolBaseForm : Form
     }
 
     /// <summary>
-    /// Centralized UX for tool results (Canceled / Validation failed / Fail / Success + optional warnings)
+    /// Centralized UX for tool results (Canceled / Validation blocked / Fail / Success + optional warnings).
     /// Override if a specific tool needs custom messaging.
     /// </summary>
     protected virtual Task HandleToolResultAsync(
@@ -123,7 +142,6 @@ public abstract class ToolBaseForm : Form
             return Task.CompletedTask;
         }
 
-        // Success
         Log.Info(toolLogTag, $"Tool succeeded. ms={result.DurationMs}. Summary='{result.Summary}'");
 
         if (showWarningsOnSuccess && result.Warnings.Count > 0)

@@ -892,24 +892,39 @@ public sealed class MkdirToolForm : ToolBaseForm
 
         SetProgress(0, names.Count);
 
-        var opt = BuildEngineOptions(basePath, names);
-        var tool = new MkdirTool(opt);
+        // Tool is now stateless; it will build options from ctx.Parameters
+        var tool = new MkdirTool();
+
+        // Canonical run parameters (this is now the real input)
+        var runParams = new Dictionary<string, string>
+        {
+            [MkdirParameterKeys.BasePath] = basePath,
+            [MkdirParameterKeys.FolderNames] = string.Join("\n", names),
+
+            [MkdirParameterKeys.CopyEnabled] = _chkCopy.Checked.ToString(),
+            [MkdirParameterKeys.SourceFilePath] = _chkCopy.Checked ? (_selectedFile ?? "") : "",
+            [MkdirParameterKeys.CopyNamingMode] =
+                (_cmbCopyNaming.SelectedIndex == 1 ? CopyNamingMode.RenameToFolderName : CopyNamingMode.KeepOriginalName).ToString(),
+
+            // Preserve current behavior
+            [MkdirParameterKeys.OverwriteExistingCopiedFiles] = _chkCopy.Checked.ToString(),
+            [MkdirParameterKeys.SkipCopyIfTargetExists] = "false",
+
+            // Keep your current verbosity behavior
+            [MkdirParameterKeys.VerboseLogging] = VerboseProgressLogging.ToString(),
+
+            // Snapshot only
+            [MkdirParameterKeys.TotalNames] = names.Count.ToString()
+        };
 
         try
         {
             await RunToolAsync(
                 tool: tool,
-                parameters: new Dictionary<string, string>
-                {
-                    ["BasePath"] = opt.BasePath,
-                    ["TotalNames"] = opt.FolderNames.Count.ToString(),
-                    ["Copy"] = opt.CopyFileToEachFolder.ToString(),
-                    ["CopyNamingMode"] = opt.CopyNamingMode.ToString()
-                },
+                parameters: runParams,
                 toolLogTag: "mkdir",
                 onCompleted: async result =>
                 {
-                    // post-run action blijft UI-only
                     if (result.Success && !result.Canceled && _chkOpenAfter.Checked)
                     {
                         try
@@ -930,16 +945,11 @@ public sealed class MkdirToolForm : ToolBaseForm
         }
         catch (Exception ex)
         {
-            // Extra vangnet voor UI-level issues (zou zelden moeten triggeren)
-            Log.Error("mkdir", $"UI execution failed after {swTotal.ElapsedMilliseconds} ms: {ex.GetType().Name}: {ex.Message}\n{ex}");
+            Log.Error("mkdir", $"UI execution failed: {ex.GetType().Name}: {ex.Message}\n{ex}");
             MessageBox.Show(this, "Er ging iets mis. Kijk in de log (Alt+L).", "MKDIR",
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
-        finally
-        {
-            swTotal.Stop();
-            Log.Info("mkdir", $"StartAsync finished (UI method). Took {swTotal.ElapsedMilliseconds} ms");
-        }
+
     }
 
 

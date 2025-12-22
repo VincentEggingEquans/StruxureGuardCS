@@ -1,43 +1,68 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Windows.Forms;
 using StruxureGuard.Core.Tools;
 
 namespace StruxureGuard.UI.Tools;
 
 public static class ToolCatalog
 {
-    // Pure metadata (Core-type)
-    public static IReadOnlyList<ToolDefinition> Tools { get; } = new List<ToolDefinition>
-{
-    new(ToolKeys.Mkdir, "MKDIR"),
-    new(ToolKeys.ExcelWriter, "ExcelWriter"),
-    new(ToolKeys.UrlDecoder, "URL Decoder"),
-    new(ToolKeys.LineConverter, "Lineconverter"),
-    new(ToolKeys.ExcelRenamer, "ExcelRenamer"),
-    new(ToolKeys.AspPathChecker, "ASP Path Checker"),
-    new(ToolKeys.NotificationPullerConfig, "NotificationPuller Config"),
-    new(ToolKeys.ModbusGroupAdvisor, "Modbus Group Advisor"),
-};
+    private sealed record ToolEntry(ToolDefinition Definition, Func<Form> Factory);
 
+    // Single source of truth: key -> (metadata + factory)
+    private static readonly IReadOnlyDictionary<string, ToolEntry> _tools =
+        new Dictionary<string, ToolEntry>(StringComparer.OrdinalIgnoreCase)
+        {
+            [ToolKeys.Mkdir] = new(
+                new ToolDefinition(ToolKeys.Mkdir, "MKDIR"),
+                () => new MkdirToolForm()),
+
+            [ToolKeys.ExcelWriter] = new(
+                new ToolDefinition(ToolKeys.ExcelWriter, "ExcelWriter"),
+                () => new ExcelWriterToolForm()),
+
+            [ToolKeys.UrlDecoder] = new(
+                new ToolDefinition(ToolKeys.UrlDecoder, "URL Decoder"),
+                () => new UrlDecoderToolForm()),
+
+            [ToolKeys.LineConverter] = new(
+                new ToolDefinition(ToolKeys.LineConverter, "Lineconverter"),
+                () => new LineConverterToolForm()),
+
+            [ToolKeys.ExcelRenamer] = new(
+                new ToolDefinition(ToolKeys.ExcelRenamer, "ExcelRenamer"),
+                () => new ExcelRenamerToolForm()),
+
+            [ToolKeys.AspPathChecker] = new(
+                new ToolDefinition(ToolKeys.AspPathChecker, "ASP Path Checker"),
+                () => new AspPathCheckerToolForm()),
+
+            [ToolKeys.NotificationPullerConfig] = new(
+                new ToolDefinition(ToolKeys.NotificationPullerConfig, "NotificationPuller Config"),
+                () => new NotificationPullerConfigToolForm()),
+
+            [ToolKeys.ModbusGroupAdvisor] = new(
+                new ToolDefinition(ToolKeys.ModbusGroupAdvisor, "Modbus Group Advisor"),
+                () => new ModbusGroupAdvisorToolForm()),
+        };
+
+    // Pure metadata (Core-type)
+    public static IReadOnlyList<ToolDefinition> Tools { get; } =
+        _tools.Values.Select(v => v.Definition).ToList();
 
     // UI-only: mapping key -> Form
-public static Form CreateForm(string key) => key.ToLowerInvariant() switch
-{
-    var k when k == ToolKeys.Mkdir => new MkdirToolForm(),
-    var k when k == ToolKeys.ExcelWriter => new ExcelWriterToolForm(),
-    var k when k == ToolKeys.UrlDecoder => new UrlDecoderToolForm(),
-    var k when k == ToolKeys.LineConverter => new LineConverterToolForm(),
-    var k when k == ToolKeys.ExcelRenamer => new ExcelRenamerToolForm(),
-    var k when k == ToolKeys.AspPathChecker => new AspPathCheckerToolForm(),
-    var k when k == ToolKeys.NotificationPullerConfig => new NotificationPullerConfigToolForm(),
-    var k when k == ToolKeys.ModbusGroupAdvisor => new ModbusGroupAdvisorToolForm(),
-    _ => throw new ArgumentOutOfRangeException(nameof(key), key, "Unknown tool key")
-};
+    public static Form CreateForm(string key)
+    {
+        if (_tools.TryGetValue(key, out var entry))
+            return entry.Factory();
 
-public static bool IsKnownToolKey(string key)
-    => Tools.Any(t => string.Equals(t.Key, key, StringComparison.OrdinalIgnoreCase));
+        throw new ArgumentOutOfRangeException(nameof(key), key, "Unknown tool key");
+    }
 
-public static string? GetButtonText(string key)
-    => Tools.FirstOrDefault(t => string.Equals(t.Key, key, StringComparison.OrdinalIgnoreCase))?.ButtonText;
+    public static bool IsKnownToolKey(string key)
+        => _tools.ContainsKey(key);
 
-
-
+    public static string? GetButtonText(string key)
+        => _tools.TryGetValue(key, out var entry) ? entry.Definition.ButtonText : null;
 }
