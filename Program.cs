@@ -16,14 +16,11 @@ internal static class Program
             "StruxureGuard",
             "Logs"));
 
-        // 🔹 THEMING BOOTSTRAP
         ThemePresets.RegisterAll();
-
-        var asm = typeof(StruxureGuard.Styling.ThemeSettings).Assembly;
-        Log.Info("theme", $"ThemeSettings assembly: {asm.GetName().Name}");
-        Log.Info("theme", $"Contains NordPreset type? {asm.GetType("StruxureGuard.Styling.Presets.NordPreset") != null}");
-
         ThemeManager.LoadAtStartup();
+
+        // ✅ NEW: auto theme new forms/controls/toolstrips
+        ThemeManager.EnableAutoTheming();
 
         Application.Run(new MainForm());
     }

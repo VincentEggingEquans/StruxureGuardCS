@@ -19,6 +19,8 @@ public sealed class MainForm : Form
 
     private Form? _themeTool;
 
+    private ToolboxForm? _toolbox;
+
     private Label _statusLabel = null!;
     private Button _btnRapportage = null!;
     private Button _btnOnderhoud = null!;
@@ -215,9 +217,16 @@ public sealed class MainForm : Form
 
     private void OpenToolbox()
     {
-        // TODO: jij levert later Toolbox Form.
-        // Later vervangen door: new ToolboxForm().Show(this);
-        MessageBox.Show(this, "Toolbox placeholder (F8 hold 2s).", "Toolbox");
+        if (_toolbox is { IsDisposed: false })
+        {
+            _toolbox.BringToFront();
+            _toolbox.Activate();
+            return;
+        }
+
+        _toolbox = new ToolboxForm();
+        _toolbox.StartPosition = FormStartPosition.CenterParent;
+        _toolbox.Show(this);
     }
 
     private void OpenThemeManager()

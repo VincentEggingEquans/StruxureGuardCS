@@ -4,18 +4,19 @@ namespace StruxureGuard.Core.Logging;
 
 public sealed class FileLogSink
 {
-    private readonly string _folder;
+    public string Folder { get; }
+
     private readonly object _lock = new();
 
     public FileLogSink(string folder)
     {
-        _folder = folder;
-        Directory.CreateDirectory(_folder);
+        Folder = folder;
+        Directory.CreateDirectory(Folder);
     }
 
     public void Write(LogEvent e)
     {
-        var path = Path.Combine(_folder, $"struxureguard_{DateTime.Now:yyyy-MM-dd}.log");
+        var path = Path.Combine(Folder, $"struxureguard_{DateTime.Now:yyyy-MM-dd}.log");
         var line = FormatLine(e);
 
         lock (_lock)
@@ -27,6 +28,6 @@ public sealed class FileLogSink
     private static string FormatLine(LogEvent e)
     {
         var ex = e.Exception is null ? "" : $" | EX: {e.Exception}";
-        return $"{e.Timestamp:yyyy-MM-dd HH:mm:ss.fff} [{e.Level}] ({e.Category}) {e.Message}{ex}";
+        return $"{e.Timestamp:yyyy-MM-dd HH:mm:ss.fff} [{e.Level}] ({e.Category}) {e.Message}{ex} [seq={e.Sequence} tid={e.ThreadId}]";
     }
 }

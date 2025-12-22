@@ -27,7 +27,23 @@ public sealed class ColorJsonConverter : JsonConverter<Color>
     }
 
     public override void Write(Utf8JsonWriter writer, Color value, JsonSerializerOptions options)
+        => writer.WriteStringValue($"#{value.A:X2}{value.R:X2}{value.G:X2}{value.B:X2}");
+}
+
+public sealed class NullableColorJsonConverter : JsonConverter<Color?>
+{
+    private static readonly ColorJsonConverter Inner = new();
+
+    public override Color? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
     {
-        writer.WriteStringValue($"#{value.A:X2}{value.R:X2}{value.G:X2}{value.B:X2}");
+        if (reader.TokenType == JsonTokenType.Null) return null;
+        var c = Inner.Read(ref reader, typeof(Color), options);
+        return c;
+    }
+
+    public override void Write(Utf8JsonWriter writer, Color? value, JsonSerializerOptions options)
+    {
+        if (value is null) { writer.WriteNullValue(); return; }
+        Inner.Write(writer, value.Value, options);
     }
 }

@@ -1,0 +1,26 @@
+# Build output
+bin/
+obj/
+TESTS/
+_chatgpt_export/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# Rider
+.idea/
+
+# Logs
+*.log
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Rubbish:
+*.zip
+*.txt
+*.ps1
+
