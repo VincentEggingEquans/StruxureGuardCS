@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Text.Json;
 using System.Windows.Forms;
 using StruxureGuard.Core.Logging;
@@ -25,18 +26,24 @@ public sealed class ModbusGroupAdvisorToolForm : ToolBaseForm
     private ModbusAnalysisResultDto? _last;
     private string _lastXml = "";
 
+    private readonly SplitContainer _splitA;
+    private readonly SplitContainer _splitB;
+
+    private bool _initialSplitApplied;
+
     public ModbusGroupAdvisorToolForm()
     {
         Text = "Modbus Group Advisor";
         WindowState = FormWindowState.Maximized;
         StartPosition = FormStartPosition.CenterParent;
 
-        // --- Create controls FIRST (so readonly assignment is valid) ---
+        // ---------- Controls ----------
         _txtInput = new TextBox
         {
             Multiline = true,
             ScrollBars = ScrollBars.Both,
             WordWrap = false,
+            AcceptsTab = true,
             Dock = DockStyle.Fill,
             Font = new System.Drawing.Font("Consolas", 10f),
             BorderStyle = BorderStyle.FixedSingle
@@ -70,7 +77,7 @@ public sealed class ModbusGroupAdvisorToolForm : ToolBaseForm
             HideSelection = false,
             BorderStyle = BorderStyle.FixedSingle
         };
-        _lvAdvice.Columns.Add("Item", 420, HorizontalAlignment.Left);
+        _lvAdvice.Columns.Add("Item", 360, HorizontalAlignment.Left);
         _lvAdvice.Columns.Add("FC", 50, HorizontalAlignment.Center);
         _lvAdvice.Columns.Add("Type", 80, HorizontalAlignment.Center);
         _lvAdvice.Columns.Add("Start", 70, HorizontalAlignment.Right);
@@ -78,7 +85,7 @@ public sealed class ModbusGroupAdvisorToolForm : ToolBaseForm
         _lvAdvice.Columns.Add("Regs/Bits", 90, HorizontalAlignment.Right);
         _lvAdvice.Columns.Add("#", 45, HorizontalAlignment.Right);
         _lvAdvice.Columns.Add("Gaps", 55, HorizontalAlignment.Center);
-        _lvAdvice.Columns.Add("Opmerking", 320, HorizontalAlignment.Left);
+        _lvAdvice.Columns.Add("Opmerking", 420, HorizontalAlignment.Left);
         _lvAdvice.Columns.Add("Point adres", 85, HorizontalAlignment.Right);
         _lvAdvice.Columns.Add("Point lengte", 95, HorizontalAlignment.Right);
 
@@ -95,7 +102,11 @@ public sealed class ModbusGroupAdvisorToolForm : ToolBaseForm
             BorderStyle = BorderStyle.FixedSingle
         };
 
-        // --- Build UI ---
+        _btnAnalyse.Click += async (_, __) => await AnalyseAsync();
+        _btnCancel.Click += (_, __) => CancelRun();
+        _btnExportXml.Click += (_, __) => ExportXml();
+
+        // ---------- Root ----------
         var root = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
@@ -106,72 +117,69 @@ public sealed class ModbusGroupAdvisorToolForm : ToolBaseForm
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         Controls.Add(root);
 
-        var header = BuildHeaderBar();
-        root.Controls.Add(header, 0, 0);
+        root.Controls.Add(BuildHeaderBar(), 0, 0);
 
-        var splitA = new SplitContainer
+        // ---------- Splitters ----------
+        _splitA = new SplitContainer
         {
             Dock = DockStyle.Fill,
             Orientation = Orientation.Horizontal,
-            SplitterWidth = 8
+            SplitterWidth = 8,
+            Panel1MinSize = 140,
+            Panel2MinSize = 240
         };
-        root.Controls.Add(splitA, 0, 1);
+        root.Controls.Add(_splitA, 0, 1);
 
-        var splitB = new SplitContainer
+        _splitB = new SplitContainer
         {
             Dock = DockStyle.Fill,
             Orientation = Orientation.Horizontal,
-            SplitterWidth = 8
+            SplitterWidth = 8,
+            Panel1MinSize = 140, // preview
+            Panel2MinSize = 240  // advice
         };
-        splitA.Panel2.Controls.Add(splitB);
+        _splitA.Panel2.Controls.Add(_splitB);
 
-        // Input card
-        splitA.Panel1.Controls.Add(BuildCard(
+        // ---------- Cards ----------
+        _splitA.Panel1.Controls.Add(BuildCard(
             title: "Input (plak hier je EBO/Excel export):",
             rightButtons: new[]
             {
-                MakeButton("Plak", 90, (_, __) => PasteFromClipboard()),
+                MakeButton("Plak (vervang)", 130, (_, __) => PasteReplaceFromClipboard()),
                 MakeButton("Clear", 90, (_, __) =>
                 {
                     _txtInput.Clear();
                     Log.Info("modbus", "CLICK Clear input");
                 })
             },
-            content: _txtInput));
+            content: _txtInput
+        ));
 
-        // Preview card
-        splitB.Panel1.Controls.Add(BuildCard(
+        _splitB.Panel1.Controls.Add(BuildCard(
             title: "Preview (wat er uit de input wordt ingelezen):",
-            rightButtons: new[]
-            {
-                MakeButton("Copy row", 110, (_, __) => CopySelectedPreviewRow())
-            },
-            content: _gridPreview));
+            rightButtons: Array.Empty<Control>(),
+            content: _gridPreview
+        ));
 
-        // Advice card
-        splitB.Panel2.Controls.Add(BuildCard(
+        _splitB.Panel2.Controls.Add(BuildCard(
             title: "Advies (groepen + onderliggende registers):",
-            rightButtons: new[]
-            {
-                MakeButton("Copy selected", 130, (_, __) => CopySelectedAdviceRow())
-            },
-            content: _lvAdvice));
+            rightButtons: Array.Empty<Control>(),
+            content: _lvAdvice
+        ));
 
-        // Events
-        _btnAnalyse.Click += async (_, __) => await AnalyseAsync();
-        _btnCancel.Click += (_, __) => CancelRun();
-        _btnExportXml.Click += (_, __) => ExportXml();
-
+        // ---------- Apply split distances SAFELY after layout ----------
         Shown += (_, __) =>
         {
-            try
-            {
-                splitA.SplitterDistance = (int)(Height * 0.48);
-                splitB.SplitterDistance = (int)(Height * 0.42);
-            }
-            catch { }
-
             Log.Info("modbus", "ModbusGroupAdvisor tool opened");
+            BeginInvoke(new Action(ApplyInitialSplitLayoutSafe));
+        };
+
+        // If the user resizes, keep it sane (but don't fight the user constantly)
+        ResizeEnd += (_, __) =>
+        {
+            // Only auto-apply once; after that, user owns the splitters
+            if (!_initialSplitApplied) return;
+            // No-op: if you want “auto re-balance on resize”, we can enable it later.
         };
 
         UpdateUiRunningState(false);
@@ -187,12 +195,12 @@ public sealed class ModbusGroupAdvisorToolForm : ToolBaseForm
             ColumnCount = 6
         };
 
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));      // title
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));  // spacer
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));      // analyse
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));      // cancel
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));      // export
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));      // status
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
         var lblTitle = new Label
         {
@@ -216,7 +224,8 @@ public sealed class ModbusGroupAdvisorToolForm : ToolBaseForm
         var outer = new Panel
         {
             Dock = DockStyle.Fill,
-            Padding = new Padding(12, 8, 12, 12)
+            Padding = new Padding(12, 8, 12, 12),
+            BorderStyle = BorderStyle.FixedSingle
         };
 
         var layout = new TableLayoutPanel
@@ -234,7 +243,7 @@ public sealed class ModbusGroupAdvisorToolForm : ToolBaseForm
             Dock = DockStyle.Top,
             AutoSize = true,
             ColumnCount = 2,
-            Padding = new Padding(0, 0, 0, 6)
+            Padding = new Padding(0, 0, 0, 8)
         };
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -249,7 +258,6 @@ public sealed class ModbusGroupAdvisorToolForm : ToolBaseForm
         var btnHost = new FlowLayoutPanel
         {
             AutoSize = true,
-            Dock = DockStyle.Fill,
             FlowDirection = FlowDirection.LeftToRight,
             WrapContents = false,
             Anchor = AnchorStyles.Right
@@ -276,6 +284,61 @@ public sealed class ModbusGroupAdvisorToolForm : ToolBaseForm
         return b;
     }
 
+    private void ApplyInitialSplitLayoutSafe()
+    {
+        if (_initialSplitApplied) return;
+
+        try
+        {
+            // Desired proportions:
+            // - splitA: input ~40% height
+            // - splitB: preview ~20% of its height (advice big)
+            var desiredA = (int)(ClientSize.Height * 0.40);
+            var desiredB = (int)(ClientSize.Height * 0.20);
+
+            SafeSetSplitterDistance(_splitA, desiredA, "splitA");
+            SafeSetSplitterDistance(_splitB, desiredB, "splitB");
+
+            _initialSplitApplied = true;
+
+            Log.Info("modbus",
+                $"Split init ok: clientH={ClientSize.Height} splitA={_splitA.SplitterDistance} splitB={_splitB.SplitterDistance}");
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("modbus", $"Split init failed: {ex.GetType().Name}: {ex.Message}\n{ex}");
+            // Do not crash the tool
+        }
+    }
+
+    private static void SafeSetSplitterDistance(SplitContainer sc, int desired, string tag)
+    {
+        // Total usable size depends on orientation
+        int total = sc.Orientation == Orientation.Horizontal ? sc.Height : sc.Width;
+
+        // During early layout this can be 0 or very small
+        if (total <= 0)
+            return;
+
+        // WinForms constraint: distance must be between Panel1MinSize and (total - Panel2MinSize - SplitterWidth)
+        int min = sc.Panel1MinSize;
+        int max = total - sc.Panel2MinSize - sc.SplitterWidth;
+
+        if (max < min)
+        {
+            // Can't satisfy mins with this size; skip
+            return;
+        }
+
+        int clamped = desired;
+        if (clamped < min) clamped = min;
+        if (clamped > max) clamped = max;
+
+        // Only set if actually different (prevents churn)
+        if (sc.SplitterDistance != clamped)
+            sc.SplitterDistance = clamped;
+    }
+
     protected override void UpdateUiRunningState(bool isRunning)
     {
         _btnAnalyse.Enabled = !isRunning;
@@ -291,16 +354,22 @@ public sealed class ModbusGroupAdvisorToolForm : ToolBaseForm
         _lblStatus.Text = $"{p.Phase}: {p.Message}";
     }
 
-    private void PasteFromClipboard()
+    // ---- Paste: replace whole input and normalize newlines ----
+    private void PasteReplaceFromClipboard()
     {
         try
         {
             var txt = Clipboard.GetText();
-            if (!string.IsNullOrEmpty(txt))
-            {
-                _txtInput.SelectedText = txt;
-                Log.Info("modbus", $"Paste from clipboard len={txt.Length}");
-            }
+            if (string.IsNullOrEmpty(txt))
+                return;
+
+            txt = txt.Replace("\r\n", "\n").Replace("\r", "\n").Replace("\n", Environment.NewLine);
+
+            _txtInput.Text = txt;
+            _txtInput.SelectionStart = _txtInput.TextLength;
+            _txtInput.ScrollToCaret();
+
+            Log.Info("modbus", $"PasteReplace ok len={txt.Length}");
         }
         catch (Exception ex)
         {
@@ -395,7 +464,7 @@ public sealed class ModbusGroupAdvisorToolForm : ToolBaseForm
 
         try
         {
-            System.IO.File.WriteAllText(sfd.FileName, _lastXml, System.Text.Encoding.UTF8);
+            System.IO.File.WriteAllText(sfd.FileName, _lastXml, Encoding.UTF8);
             Log.Info("modbus", $"Export XML OK: '{sfd.FileName}' len={_lastXml.Length}");
             MessageBox.Show(this, $"XML opgeslagen:\n{sfd.FileName}", "Export geslaagd",
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -407,10 +476,7 @@ public sealed class ModbusGroupAdvisorToolForm : ToolBaseForm
         }
     }
 
-    private void ClearPreview()
-    {
-        _gridPreview.Rows.Clear();
-    }
+    private void ClearPreview() => _gridPreview.Rows.Clear();
 
     private void ClearAdvice()
     {
@@ -492,60 +558,12 @@ public sealed class ModbusGroupAdvisorToolForm : ToolBaseForm
             for (int i = 0; i < _lvAdvice.Columns.Count; i++)
                 _lvAdvice.Columns[i].Width = -2;
 
-            _lvAdvice.Columns[0].Width = Math.Max(_lvAdvice.Columns[0].Width, 320);
-            _lvAdvice.Columns[8].Width = Math.Max(_lvAdvice.Columns[8].Width, 260);
+            _lvAdvice.Columns[0].Width = Math.Max(_lvAdvice.Columns[0].Width, 260);
+            _lvAdvice.Columns[8].Width = Math.Max(_lvAdvice.Columns[8].Width, 320);
         }
         catch (Exception ex)
         {
             Log.Warn("modbus", $"AutoSizeAdviceColumns failed: {ex.GetType().Name}: {ex.Message}");
-        }
-    }
-
-    private void CopySelectedPreviewRow()
-    {
-        try
-        {
-            if (_gridPreview.SelectedRows.Count == 0) return;
-            var r = _gridPreview.SelectedRows[0];
-            var vals = new[]
-            {
-                r.Cells[0].Value?.ToString() ?? "",
-                r.Cells[1].Value?.ToString() ?? "",
-                r.Cells[2].Value?.ToString() ?? "",
-                r.Cells[3].Value?.ToString() ?? "",
-                r.Cells[4].Value?.ToString() ?? "",
-                r.Cells[5].Value?.ToString() ?? ""
-            };
-            var text = string.Join("\t", vals);
-            Clipboard.SetText(text);
-            Log.Info("modbus", $"Copy preview row ok len={text.Length}");
-            _lblStatus.Text = "Copied preview row.";
-        }
-        catch (Exception ex)
-        {
-            Log.Warn("modbus", $"Copy preview row failed: {ex.GetType().Name}: {ex.Message}\n{ex}");
-        }
-    }
-
-    private void CopySelectedAdviceRow()
-    {
-        try
-        {
-            if (_lvAdvice.SelectedItems.Count == 0) return;
-            var it = _lvAdvice.SelectedItems[0];
-
-            var parts = new List<string> { it.Text };
-            for (int i = 1; i < it.SubItems.Count; i++)
-                parts.Add(it.SubItems[i].Text);
-
-            var text = string.Join("\t", parts);
-            Clipboard.SetText(text);
-            Log.Info("modbus", $"Copy advice row ok len={text.Length}");
-            _lblStatus.Text = "Copied advice row.";
-        }
-        catch (Exception ex)
-        {
-            Log.Warn("modbus", $"Copy advice row failed: {ex.GetType().Name}: {ex.Message}\n{ex}");
         }
     }
 }
