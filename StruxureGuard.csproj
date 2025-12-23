@@ -13,5 +13,16 @@
   <EmbeddedResource Remove="_chatgpt_export\**\*" />
   <None Remove="_chatgpt_export\**\*" />
   <Content Remove="_chatgpt_export\**\*" />
+
+  <Compile Remove="OLD\**\*.cs" />
+  <EmbeddedResource Remove="OLD\**\*" />
+  <None Remove="OLD\**\*" />
+  <Content Remove="OLD\**\*" />
+
+  <!-- Modbus Advisor: group icon copied to output as /Assets/group_icon.png -->
+  <Content Include="UI\Assets\group_icon.png">
+    <Link>Assets\group_icon.png</Link>
+    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+  </Content>
 </ItemGroup>
 </Project>

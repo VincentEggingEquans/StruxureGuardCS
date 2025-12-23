@@ -15,6 +15,8 @@ public abstract class ToolBaseForm : Form
     private CancellationTokenSource? _cts;
     private bool _isRunning;
 
+    private string? _activeToolLogTag;
+
     protected bool IsRunning => _isRunning;
 
     protected ToolBaseForm()
@@ -28,8 +30,13 @@ public abstract class ToolBaseForm : Form
     protected void CancelRun()
     {
         if (!_isRunning) return;
-        Log.Info(ToolLogTags.Ui, $"{GetType().Name} cancel requested");
-        try { _cts?.Cancel(); } catch { }
+        var tag = _activeToolLogTag ?? ToolLogTags.Ui;
+        Log.Info(tag, $"Cancel requested form='{GetType().Name}'");
+        try { _cts?.Cancel(); }
+        catch (Exception ex)
+        {
+            Log.Warn(tag, $"Cancel failed: {ex.GetType().Name}: {ex.Message}\n{ex}");
+        }
     }
 
     // Existing signature stays (backwards compatible)
@@ -62,13 +69,17 @@ public abstract class ToolBaseForm : Form
         Func<ToolResult, string?>? successMessageFactory = null)
     {
         if (_isRunning)
+        {
+            Log.Warn(toolLogTag, $"Run blocked: already running form='{GetType().Name}'");
             return ToolResult.Fail("Already running");
+        }
 
         _cts?.Dispose();
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
 
         _isRunning = true;
+        _activeToolLogTag = toolLogTag;
         UpdateUiRunningState(true);
 
         var ctx = new ToolRunContext(toolKey: tool.ToolKey, parameters: parameters);
@@ -85,6 +96,7 @@ public abstract class ToolBaseForm : Form
         finally
         {
             _isRunning = false;
+            _activeToolLogTag = null;
             UpdateUiRunningState(false);
 
             _cts?.Dispose();
@@ -156,8 +168,21 @@ public abstract class ToolBaseForm : Form
             return Task.CompletedTask;
         }
 
-        var successMsg = successMessageFactory?.Invoke(result) ?? "Klaar.";
+        var successMsg = successMessageFactory?.Invoke(result);
+
+        // Default alleen als er geen factory is meegegeven
+        if (successMsg is null)
+            successMsg = "Klaar.";
+
+        // Als leeg/whitespace: géén popup tonen
+        if (string.IsNullOrWhiteSpace(successMsg))
+        {
+            Log.Info(toolLogTag, "Success popup suppressed (empty message).");
+            return Task.CompletedTask;
+        }
+
         MessageBox.Show(this, successMsg, "Klaar", MessageBoxButtons.OK, MessageBoxIcon.Information);
         return Task.CompletedTask;
+
     }
 }

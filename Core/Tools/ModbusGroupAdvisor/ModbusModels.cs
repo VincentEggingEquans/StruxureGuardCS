@@ -36,6 +36,14 @@ public sealed class ModbusPreviewRowDto
     public required string RawType { get; init; }
 }
 
+public sealed class ModbusRejectedRowDto
+{
+    public int RowNumber { get; init; }          // 1-based line number (header=1)
+    public string? Name { get; init; }           // best-effort, may be null
+    public required string Reason { get; init; } // why parse failed
+    public required string RawLine { get; init; }// original raw line
+}
+
 public sealed class ModbusEntryDto
 {
     public required string Name { get; init; }
@@ -61,6 +69,10 @@ public sealed class ModbusGroupDto
 public sealed class ModbusAnalysisResultDto
 {
     public required List<ModbusPreviewRowDto> PreviewRows { get; init; }
+
+    // NEW: rows that could not be parsed (for red preview highlighting etc.)
+    public required List<ModbusRejectedRowDto> RejectedRows { get; init; }
+
     public required List<ModbusGroupDto> Groups { get; init; }
     public required List<string> Warnings { get; init; }
 }

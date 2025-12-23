@@ -26,6 +26,21 @@ internal static class Program
         // ✅ NEW: auto theme new forms/controls/toolstrips
         ThemeManager.EnableAutoTheming();
 
+#if DEBUG
+        Log.Warn("auth", "DEBUG build: login bypass active (LoginForm skipped).");
         Application.Run(new MainForm());
+#else
+        using (var login = new LoginForm())
+        {
+            var dr = login.ShowDialog();
+            if (dr != DialogResult.OK)
+            {
+                Log.Warn("auth", "Login failed/canceled => app exit.");
+                return;
+            }
+        }
+
+        Application.Run(new MainForm());
+#endif
     }
 }

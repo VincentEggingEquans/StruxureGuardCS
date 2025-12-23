@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 
@@ -15,7 +14,18 @@ public sealed class ModbusGroupAdvisorEngine
 
     public const string XmlVersion = "4.0.3.176";
 
+    // Backwards compatible signature (existing callers)
     public static (List<RegisterEntry> Entries, List<ModbusPreviewRowDto> Preview, List<string> Warnings) ParseInput(string raw)
+    {
+        var (entries, preview, _, warnings) = ParseInputDetailed(raw);
+        return (entries, preview, warnings);
+    }
+
+    // NEW: also returns rejected rows
+    public static (List<RegisterEntry> Entries,
+                   List<ModbusPreviewRowDto> Preview,
+                   List<ModbusRejectedRowDto> Rejected,
+                   List<string> Warnings) ParseInputDetailed(string raw)
     {
         raw ??= "";
         var lines = raw.Split(new[] { "\r\n", "\n", "\r" }, StringSplitOptions.None)
@@ -23,7 +33,7 @@ public sealed class ModbusGroupAdvisorEngine
                        .ToList();
 
         if (lines.Count == 0)
-            return (new List<RegisterEntry>(), new List<ModbusPreviewRowDto>(), new List<string>());
+            return (new List<RegisterEntry>(), new List<ModbusPreviewRowDto>(), new List<ModbusRejectedRowDto>(), new List<string>());
 
         var warnings = new List<string>();
 
@@ -31,7 +41,7 @@ public sealed class ModbusGroupAdvisorEngine
         var rows = ParseDelimited(lines, delim);
 
         if (rows.Count == 0)
-            return (new List<RegisterEntry>(), new List<ModbusPreviewRowDto>(), new List<string>());
+            return (new List<RegisterEntry>(), new List<ModbusPreviewRowDto>(), new List<ModbusRejectedRowDto>(), new List<string>());
 
         var header = rows[0];
         var headerNorm = header.Select(NormHeader).ToList();
@@ -48,22 +58,28 @@ public sealed class ModbusGroupAdvisorEngine
         var typeI = FindColIndex(headerNorm, TYPE_KEYS);
         var fcI   = FindColIndex(headerNorm, FC_KEYS);
 
-        var hasHeader = (nameI is not null && addrI is not null && fcI is not null);
-
-        if (!hasHeader)
+        // Require at least name+addr+fc to produce useful groups
+        if (nameI is null || addrI is null || fcI is null)
         {
-            // Matches your Python decision: no fallback rows, just warn and parse nothing
             warnings.Add("Header niet herkend; plak bij voorkeur export met kolomkoppen (Name/Register number/Read function code/...).");
-            return (new List<RegisterEntry>(), new List<ModbusPreviewRowDto>(), warnings);
+            return (new List<RegisterEntry>(), new List<ModbusPreviewRowDto>(), new List<ModbusRejectedRowDto>(), warnings);
         }
 
-        var dataRows = rows.Skip(1).ToList();
+        var nameCol = nameI.Value;
+        var addrCol = addrI.Value;
+        var fcCol = fcI.Value;
+        var typeCol = typeI; // optional
 
         var entries = new List<RegisterEntry>();
         var preview = new List<ModbusPreviewRowDto>();
+        var rejected = new List<ModbusRejectedRowDto>();
         var errors = new List<string>();
 
-        var rowIndex = 1; // header = 1
+        var dataRows = rows.Skip(1).ToList();
+
+        // header line is 1, first data line is 2
+        var rowIndex = 1;
+
         foreach (var r in dataRows)
         {
             rowIndex++;
@@ -73,64 +89,89 @@ public sealed class ModbusGroupAdvisorEngine
 
             try
             {
-                var name = SafeCell(r, nameI.Value);
+                var name = SafeCell(r, nameCol);
                 if (string.IsNullOrWhiteSpace(name))
                     name = $"Row{rowIndex}";
 
-                var addrRaw = SafeCell(r, addrI.Value);
+                var addrRaw = SafeCell(r, addrCol);
                 if (string.IsNullOrWhiteSpace(addrRaw))
                     throw new InvalidOperationException("Geen register/adres gevonden");
 
                 var address = ParseAddress(addrRaw);
 
-                var fcRaw = SafeCell(r, fcI.Value);
+                var fcRaw = SafeCell(r, fcCol);
                 if (string.IsNullOrWhiteSpace(fcRaw))
                     throw new InvalidOperationException("Geen functiecode gevonden");
 
-                var functionCode = ParseFc(fcRaw);
+                var fc = ParseFc(fcRaw);
 
-                var regTypeRaw = (typeI is null) ? "" : SafeCell(r, typeI.Value);
-                var length = LengthFromType(regTypeRaw);
-                var regType = RTypeFromTypeAndFc(regTypeRaw, functionCode);
+                var rawType = (typeCol is null) ? "" : SafeCell(r, typeCol.Value);
+                if (string.IsNullOrWhiteSpace(rawType))
+                    rawType = "unknown";
 
-                entries.Add(new RegisterEntry
+                var len = LengthFromType(rawType);
+                var regType = RTypeFromTypeAndFc(rawType, fc);
+
+                var entry = new RegisterEntry
                 {
                     Name = name,
                     Address = address,
-                    Length = length,
-                    FunctionCode = functionCode,
+                    Length = len,
+                    FunctionCode = fc,
                     RegType = regType
-                });
+                };
+
+                entries.Add(entry);
 
                 preview.Add(new ModbusPreviewRowDto
                 {
                     Name = name,
                     Address = address,
-                    Length = length,
-                    FunctionCode = functionCode,
+                    Length = len,
+                    FunctionCode = fc,
                     RegType = regType,
-                    RawType = regTypeRaw ?? ""
+                    RawType = rawType
                 });
             }
             catch (Exception ex)
             {
+                var rawLine = (rowIndex - 1 >= 0 && rowIndex - 1 < lines.Count)
+                    ? lines[rowIndex - 1]
+                    : string.Join(delim.ToString(), r);
+
+                string? nameGuess = null;
+                try
+                {
+                    var n = SafeCell(r, nameCol);
+                    if (!string.IsNullOrWhiteSpace(n)) nameGuess = n;
+                }
+                catch { /* ignore */ }
+
+                rejected.Add(new ModbusRejectedRowDto
+                {
+                    RowNumber = rowIndex,
+                    Name = nameGuess,
+                    Reason = ex.Message,
+                    RawLine = rawLine
+                });
+
                 errors.Add($"Regel {rowIndex}: {ex.Message}");
             }
         }
 
-        // same spirit as python: if no entries and we have errors -> hard fail
+        // If nothing parsed and errors exist -> hard fail (tool-runner will show fail)
         if (errors.Count > 0 && entries.Count == 0)
             throw new InvalidOperationException(string.Join(Environment.NewLine, errors.Take(20)));
 
-        // if partial success -> warnings
+        // Partial parse -> warnings + keep rejected list
         if (errors.Count > 0 && entries.Count > 0)
         {
-            warnings.Add("Er waren waarschuwingen / overgeslagen regels:");
+            warnings.Add($"Er waren waarschuwingen / overgeslagen regels: rejected={rejected.Count}");
             warnings.AddRange(errors.Take(12));
             if (errors.Count > 12) warnings.Add("...");
         }
 
-        return (entries, preview, warnings);
+        return (entries, preview, rejected, warnings);
     }
 
     public static List<RegisterGroup> BuildGroups(List<RegisterEntry> entries)
@@ -139,154 +180,126 @@ public sealed class ModbusGroupAdvisorEngine
             .GroupBy(e => (e.FunctionCode, e.RegType))
             .ToDictionary(g => g.Key, g => g.OrderBy(x => x.Address).ToList());
 
-        var result = new List<RegisterGroup>();
-        var groupCounter = 1;
+        var allGroups = new List<RegisterGroup>();
+        var groupId = 1;
 
         foreach (var kv in grouped)
         {
-            var fc = kv.Key.FunctionCode;
-            var rtype = kv.Key.RegType;
-            var lst = kv.Value;
+            var (fc, rtype) = kv.Key;
+            var pts = kv.Value;
 
-            var maxUnits = rtype == "register" ? MaxRegisters : MaxCoilBits;
-            var maxGap = rtype == "register" ? MaxRegGap : MaxCoilGap;
+            var maxUnits = (rtype == "coil") ? MaxCoilBits : MaxRegisters;
+            var maxGap = (rtype == "coil") ? MaxCoilGap : MaxRegGap;
 
-            var currentEntries = new List<RegisterEntry>();
-            var currentHasGaps = false;
-            int currentUnits = 0;
-            int currentStart = 0;
-            int currentEnd = 0;
-            int prevEnd = 0;
+            int? curStart = null;
+            int curEnd = 0;
+            var curEntries = new List<RegisterEntry>();
+            var hasGaps = false;
 
             void Flush()
             {
-                if (currentEntries.Count == 0) return;
+                if (curStart is null || curEntries.Count == 0) return;
 
-                result.Add(new RegisterGroup
+                var totalUnits = curEnd - curStart.Value + 1;
+
+                allGroups.Add(new RegisterGroup
                 {
-                    GroupId = groupCounter,
+                    GroupId = groupId++,
                     FunctionCode = fc,
                     RegType = rtype,
-                    StartAddress = currentStart,
-                    EndAddress = currentEnd,
-                    TotalUnits = currentUnits,
-                    NumPoints = currentEntries.Count,
-                    HasGaps = currentHasGaps,
-                    Entries = currentEntries.ToList()
+                    StartAddress = curStart.Value,
+                    EndAddress = curEnd,
+                    TotalUnits = totalUnits,
+                    NumPoints = curEntries.Count,
+                    HasGaps = hasGaps,
+                    Entries = curEntries.ToList()
                 });
 
-                groupCounter++;
-                currentEntries.Clear();
-                currentHasGaps = false;
-                currentUnits = 0;
-                currentStart = 0;
-                currentEnd = 0;
-                prevEnd = 0;
+                curStart = null;
+                curEnd = 0;
+                curEntries.Clear();
+                hasGaps = false;
             }
 
-            foreach (var e in lst)
+            foreach (var p in pts)
             {
-                var eStart = e.Address;
-                var eEnd = e.Address + e.Length - 1;
-                var eUnits = e.Length;
+                var pStart = p.Address;
+                var pEnd = p.Address + Math.Max(1, p.Length) - 1;
 
-                if (currentEntries.Count == 0)
+                if (curStart is null)
                 {
-                    currentEntries.Add(e);
-                    currentUnits = eUnits;
-                    currentStart = eStart;
-                    currentEnd = eEnd;
-                    prevEnd = eEnd;
+                    curStart = pStart;
+                    curEnd = pEnd;
+                    curEntries.Add(p);
                     continue;
                 }
 
-                var gap = eStart - prevEnd - 1;
-                var wouldUnits = currentUnits + eUnits;
+                var gap = pStart - curEnd - 1;
+                var wouldNeedEnd = Math.Max(curEnd, pEnd);
+                var wouldTotalUnits = wouldNeedEnd - curStart.Value + 1;
 
-                if (gap > maxGap || wouldUnits > maxUnits)
+                if (gap > maxGap || wouldTotalUnits > maxUnits)
                 {
                     Flush();
-                    currentEntries.Add(e);
-                    currentUnits = eUnits;
-                    currentStart = eStart;
-                    currentEnd = eEnd;
-                    prevEnd = eEnd;
+                    curStart = pStart;
+                    curEnd = pEnd;
+                    curEntries.Add(p);
+                    continue;
                 }
-                else
-                {
-                    currentEntries.Add(e);
-                    currentUnits = wouldUnits;
-                    currentEnd = Math.Max(currentEnd, eEnd);
-                    if (gap > 0) currentHasGaps = true;
-                    prevEnd = eEnd;
-                }
+
+                if (gap > 0) hasGaps = true;
+
+                curEnd = wouldNeedEnd;
+                curEntries.Add(p);
             }
 
             Flush();
         }
 
-        result.Sort((a, b) =>
-        {
-            var c = a.FunctionCode.CompareTo(b.FunctionCode);
-            if (c != 0) return c;
-            c = string.Compare(a.RegType, b.RegType, StringComparison.Ordinal);
-            if (c != 0) return c;
-            return a.StartAddress.CompareTo(b.StartAddress);
-        });
-
-        return result;
+        return allGroups
+            .OrderBy(g => g.RegType, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(g => g.FunctionCode)
+            .ThenBy(g => g.StartAddress)
+            .ToList();
     }
 
     public static string BuildEboXml(List<RegisterGroup> groups)
     {
-        var objectSet = new XElement("ObjectSet",
-            new XAttribute("ExportMode", "Special"),
-            new XAttribute("Note", "TypesFirst"),
-            new XAttribute("SemanticsFilter", "Special"),
-            new XAttribute("Version", XmlVersion)
-        );
-
-        var meta = new XElement("MetaInformation",
-            new XElement("ExportMode", new XAttribute("Value", "Special")),
-            new XElement("SemanticsFilter", new XAttribute("Value", "None")),
-            new XElement("RuntimeVersion", new XAttribute("Value", XmlVersion)),
-            new XElement("SourceVersion", new XAttribute("Value", XmlVersion)),
-            new XElement("ServerFullPath", new XAttribute("Value", ""))
-        );
-        objectSet.Add(meta);
-
-        var exported = new XElement("ExportedObjects");
-        objectSet.Add(exported);
+        var root = new XElement("ObjectSet",
+            new XAttribute("Version", XmlVersion));
 
         foreach (var g in groups)
+            root.Add(BuildGroupObject(g));
+
+        var doc = new XDocument(new XDeclaration("1.0", "utf-8", "yes"), root);
+        return doc.ToString();
+    }
+
+    private static XElement BuildGroupObject(RegisterGroup g)
+    {
+        var obj = new XElement("Object",
+            new XAttribute("Type", "ModbusReadGroup"),
+            new XAttribute("Name", $"Group_{g.GroupId}_{g.RegType}_FC{g.FunctionCode}_{g.StartAddress}_{g.EndAddress}"));
+
+        obj.Add(new XElement("Property", new XAttribute("Name", "FunctionCode"), new XAttribute("Value", g.FunctionCode)));
+        obj.Add(new XElement("Property", new XAttribute("Name", "RegType"), new XAttribute("Value", g.RegType)));
+        obj.Add(new XElement("Property", new XAttribute("Name", "StartAddress"), new XAttribute("Value", g.StartAddress)));
+        obj.Add(new XElement("Property", new XAttribute("Name", "EndAddress"), new XAttribute("Value", g.EndAddress)));
+        obj.Add(new XElement("Property", new XAttribute("Name", "TotalUnits"), new XAttribute("Value", g.TotalUnits)));
+
+        var points = new XElement("Points");
+        foreach (var p in g.Entries.OrderBy(e => e.Address))
         {
-            var name = $"Modbus Register Group FC{g.FunctionCode} {g.StartAddress} - {g.EndAddress}";
-            var oi = new XElement("OI",
-                new XAttribute("NAME", name),
-                new XAttribute("TYPE", "modbus.point.ModbusRegisterGroup")
-            );
-
-            var piCt = new XElement("PI", new XAttribute("Name", "ContentType"),
-                new XElement("Reference",
-                    new XAttribute("DeltaFilter", "0"),
-                    new XAttribute("Locked", "1"),
-                    new XAttribute("Object", "~/System/Content Types/mapModbus"),
-                    new XAttribute("Retransmit", "0"),
-                    new XAttribute("TransferRate", "10")
-                )
-            );
-
-            oi.Add(piCt);
-            oi.Add(new XElement("PI", new XAttribute("Name", "GroupReadCode"), new XAttribute("Value", g.FunctionCode.ToString(CultureInfo.InvariantCulture))));
-            oi.Add(new XElement("PI", new XAttribute("Name", "UseContentTypeFromRule"), new XAttribute("Value", "0")));
-
-            exported.Add(oi);
+            points.Add(new XElement("Point",
+                new XAttribute("Name", p.Name),
+                new XAttribute("Address", p.Address),
+                new XAttribute("Length", p.Length),
+                new XAttribute("FunctionCode", p.FunctionCode),
+                new XAttribute("RegType", p.RegType)));
         }
 
-        var doc = new XDocument(new XDeclaration("1.0", "UTF-8", null), objectSet);
-
-        // pretty-print
-        return doc.ToString(SaveOptions.None);
+        obj.Add(points);
+        return obj;
     }
 
     // ---------------- helpers ----------------
@@ -306,19 +319,24 @@ public sealed class ModbusGroupAdvisorEngine
     {
         foreach (var ln in lines)
         {
-            if (string.IsNullOrWhiteSpace(ln)) continue;
-            if (ln.Contains('\t')) return '\t';
-            if (ln.Contains(';')) return ';';
-            if (ln.Contains(',')) return ',';
-            return '\t';
+            if (string.IsNullOrWhiteSpace(ln))
+                continue;
+
+            if (ln.Contains('\t'))
+                return '\t';
+
+            if (ln.Count(c => c == ';') > ln.Count(c => c == ','))
+                return ';';
+
+            if (ln.Contains(','))
+                return ',';
         }
+
         return '\t';
     }
 
     private static List<List<string>> ParseDelimited(List<string> lines, char delim)
     {
-        // Simple CSV-ish split (sufficient for typical EBO/Excel exports)
-        // If you need quoted CSV later, we can upgrade safely.
         var result = new List<List<string>>();
         foreach (var ln in lines)
         {
@@ -361,6 +379,11 @@ public sealed class ModbusGroupAdvisorEngine
 
         t = t.Replace(" ", "");
 
+        // common: "3110/32"
+        var slash = t.IndexOf('/');
+        if (slash >= 0)
+            t = t.Substring(0, slash);
+
         // 1.234.567 or 1,234,567
         if (Regex.IsMatch(t, @"^\d{1,3}([.,]\d{3})+$"))
         {
@@ -374,6 +397,11 @@ public sealed class ModbusGroupAdvisorEngine
             if (Math.Abs(f - Math.Round(f)) < 1e-9)
                 return (int)Math.Round(f);
         }
+
+        // fallback: digits only (handles "3.110")
+        var digits = new string(t.Where(char.IsDigit).ToArray());
+        if (digits.Length > 0)
+            return int.Parse(digits, CultureInfo.InvariantCulture);
 
         return int.Parse(t, CultureInfo.InvariantCulture);
     }

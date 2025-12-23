@@ -35,11 +35,11 @@ public sealed class ModbusGroupAdvisorTool : ITool
 
         progress?.Report(new ToolProgressInfo(0, 100, null, "Parsing input...", "Parse", 5));
 
-        var (entries, preview, warnings) = ModbusGroupAdvisorEngine.ParseInput(raw);
+        var (entries, preview, rejected, warnings) = ModbusGroupAdvisorEngine.ParseInputDetailed(raw);
 
         ct.ThrowIfCancellationRequested();
 
-        progress?.Report(new ToolProgressInfo(0, 100, null, $"Parsed entries={entries.Count}", "Parse", 30));
+        progress?.Report(new ToolProgressInfo(0, 100, null, $"Parsed entries={entries.Count} rejected={rejected.Count}", "Parse", 30));
 
         var groups = (entries.Count == 0)
             ? new List<RegisterGroup>()
@@ -50,6 +50,7 @@ public sealed class ModbusGroupAdvisorTool : ITool
         var dto = new ModbusAnalysisResultDto
         {
             PreviewRows = preview,
+            RejectedRows = rejected,
             Groups = groups.Select(g => new ModbusGroupDto
             {
                 GroupId = g.GroupId,
@@ -82,7 +83,7 @@ public sealed class ModbusGroupAdvisorTool : ITool
 
         progress?.Report(new ToolProgressInfo(1, 1, null, "Done", "Done", 100));
 
-        var res = ToolResult.Ok(summary: $"Parsed={entries.Count} Groups={groups.Count}")
+        var res = ToolResult.Ok(summary: $"Parsed={entries.Count} Groups={groups.Count} Rejected={rejected.Count}")
             .WithOutput(OutputKeyAnalysisJson, json)
             .WithOutput(OutputKeyEboXml, xml);
 
@@ -92,7 +93,9 @@ public sealed class ModbusGroupAdvisorTool : ITool
         if (entries.Count == 0 && warnings.Count == 0)
             res.WithWarning("Geen geldige punten gevonden.");
 
-        Log.Info("modbus", $"Analyse done runId='{ctx.RunId}' entries={entries.Count} groups={groups.Count} warnings={warnings.Count}");
+        Log.Info("modbus",
+            $"Analyse done runId='{ctx.RunId}' entries={entries.Count} groups={groups.Count} rejected={rejected.Count} warnings={warnings.Count}");
+
         return Task.FromResult(res);
     }
 }

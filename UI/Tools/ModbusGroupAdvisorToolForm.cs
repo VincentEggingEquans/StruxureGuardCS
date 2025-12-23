@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
@@ -12,23 +14,24 @@ namespace StruxureGuard.UI.Tools;
 
 public sealed class ModbusGroupAdvisorToolForm : ToolBaseForm
 {
-    private readonly TextBox _txtInput;
+    // Input is now a real grid (true columns)
+    private readonly DataGridView _gridInput;
 
     private readonly Button _btnAnalyse;
-    private readonly Button _btnCancel;
     private readonly Button _btnExportXml;
 
-    private readonly Label _lblStatus;
-
-    private readonly DataGridView _gridPreview;
+    private readonly ListView _lvPreview;
     private readonly ListView _lvAdvice;
+
+    private readonly ImageList _adviceImages;
+    private const string AdviceIconGroupKey = "group";
+    private const string AdviceRowKind_Remark = "remark";
 
     private ModbusAnalysisResultDto? _last;
     private string _lastXml = "";
 
-    private readonly SplitContainer _splitA;
-    private readonly SplitContainer _splitB;
-
+    private readonly SplitContainer _splitMain;
+    private readonly SplitContainer _splitLeft;
     private bool _initialSplitApplied;
 
     public ModbusGroupAdvisorToolForm()
@@ -37,347 +40,404 @@ public sealed class ModbusGroupAdvisorToolForm : ToolBaseForm
         WindowState = FormWindowState.Maximized;
         StartPosition = FormStartPosition.CenterParent;
 
-        // ---------- Controls ----------
-        _txtInput = new TextBox
-        {
-            Multiline = true,
-            ScrollBars = ScrollBars.Both,
-            WordWrap = false,
-            AcceptsTab = true,
-            Dock = DockStyle.Fill,
-            Font = new System.Drawing.Font("Consolas", 10f),
-            BorderStyle = BorderStyle.FixedSingle
-        };
-
-        _gridPreview = new DataGridView
+        // ---------- Input Grid ----------
+        _gridInput = new DataGridView
         {
             Dock = DockStyle.Fill,
-            ReadOnly = true,
+            BorderStyle = BorderStyle.FixedSingle,
+            BackgroundColor = SystemColors.Window,
             AllowUserToAddRows = false,
             AllowUserToDeleteRows = false,
             AllowUserToResizeRows = false,
-            AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
-            SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-            MultiSelect = false,
+            RowHeadersVisible = false,
+            MultiSelect = true,
+            SelectionMode = DataGridViewSelectionMode.CellSelect,
+            ClipboardCopyMode = DataGridViewClipboardCopyMode.EnableWithoutHeaderText,
+            AutoGenerateColumns = false,
+            Font = new Font("Segoe UI", 9f)
+        };
+
+        _gridInput.ColumnHeadersDefaultCellStyle.Font = new Font(_gridInput.Font, FontStyle.Bold);
+
+        // Ctrl+V = paste-replace
+        _gridInput.KeyDown += (_, e) =>
+        {
+            if (e.Control && e.KeyCode == Keys.V)
+            {
+                e.SuppressKeyPress = true;
+                PasteReplaceGridFromClipboard();
+            }
+        };
+
+        // ---------- Preview ----------
+        _lvPreview = new ListView
+        {
+            Dock = DockStyle.Fill,
+            View = View.Details,
+            FullRowSelect = true,
+            HideSelection = false,
             BorderStyle = BorderStyle.FixedSingle
         };
-        _gridPreview.Columns.Add("name", "Name");
-        _gridPreview.Columns.Add("address", "Adres");
-        _gridPreview.Columns.Add("length", "Lengte");
-        _gridPreview.Columns.Add("fc", "FC");
-        _gridPreview.Columns.Add("type", "Type");
-        _gridPreview.Columns.Add("raw", "Register type (raw)");
 
+        _lvPreview.Columns.Add("Name", 340, HorizontalAlignment.Left);
+        _lvPreview.Columns.Add("Adres", 80, HorizontalAlignment.Right);
+        _lvPreview.Columns.Add("Len", 55, HorizontalAlignment.Right);
+        _lvPreview.Columns.Add("FC", 45, HorizontalAlignment.Center);
+        _lvPreview.Columns.Add("Type", 80, HorizontalAlignment.Left);
+        _lvPreview.Columns.Add("Raw type", 240, HorizontalAlignment.Left);
+        _lvPreview.Columns.Add("Status", 260, HorizontalAlignment.Left);
+
+        // ---------- Advice ----------
         _lvAdvice = new ListView
         {
             Dock = DockStyle.Fill,
             View = View.Details,
             FullRowSelect = true,
-            GridLines = true,
             HideSelection = false,
-            BorderStyle = BorderStyle.FixedSingle
+            BorderStyle = BorderStyle.FixedSingle,
+            OwnerDraw = true
         };
+
+        _lvAdvice.DrawColumnHeader += (_, e) => e.DrawDefault = true;
+
+        _lvAdvice.DrawItem += (_, e) =>
+        {
+            var item = e.Item;
+            if (item is null) { e.DrawDefault = true; return; }
+
+            if (item.Tag is string s && s == AdviceRowKind_Remark)
+            {
+                e.DrawBackground();
+                if (item.Selected) e.DrawFocusRectangle();
+                return;
+            }
+
+            e.DrawDefault = true;
+        };
+
+        _lvAdvice.DrawSubItem += (_, e) =>
+        {
+            var item = e.Item;
+            if (item is null) { e.DrawDefault = true; return; }
+
+            if (item.Tag is string s && s == AdviceRowKind_Remark)
+            {
+                DrawRemarkRowSubItem(e);
+                return;
+            }
+
+            e.DrawDefault = true;
+        };
+
+        _adviceImages = new ImageList
+        {
+            ImageSize = new Size(16, 16),
+            ColorDepth = ColorDepth.Depth32Bit
+        };
+
+        // Koppel de imagelist aan de ListView (dan is SmallImageList nooit null)
+        _lvAdvice.SmallImageList = _adviceImages;
+
+        // Laad icoon (non-fatal, logt zelf)
+        TryLoadAdviceIcon();
+
+
         _lvAdvice.Columns.Add("Item", 360, HorizontalAlignment.Left);
-        _lvAdvice.Columns.Add("FC", 50, HorizontalAlignment.Center);
-        _lvAdvice.Columns.Add("Type", 80, HorizontalAlignment.Center);
-        _lvAdvice.Columns.Add("Start", 70, HorizontalAlignment.Right);
-        _lvAdvice.Columns.Add("End", 70, HorizontalAlignment.Right);
-        _lvAdvice.Columns.Add("Regs/Bits", 90, HorizontalAlignment.Right);
-        _lvAdvice.Columns.Add("#", 45, HorizontalAlignment.Right);
-        _lvAdvice.Columns.Add("Gaps", 55, HorizontalAlignment.Center);
-        _lvAdvice.Columns.Add("Opmerking", 420, HorizontalAlignment.Left);
-        _lvAdvice.Columns.Add("Point adres", 85, HorizontalAlignment.Right);
-        _lvAdvice.Columns.Add("Point lengte", 95, HorizontalAlignment.Right);
+        _lvAdvice.Columns.Add("FC", 40, HorizontalAlignment.Center);
+        _lvAdvice.Columns.Add("Type", 70, HorizontalAlignment.Left);
+        _lvAdvice.Columns.Add("Start", 60, HorizontalAlignment.Right);
+        _lvAdvice.Columns.Add("End", 60, HorizontalAlignment.Right);
+        _lvAdvice.Columns.Add("Regs/Bits", 80, HorizontalAlignment.Left);
+        _lvAdvice.Columns.Add("#", 40, HorizontalAlignment.Right);
+        _lvAdvice.Columns.Add("Gaps", 60, HorizontalAlignment.Left);
+        _lvAdvice.Columns.Add("Point lengte", 110, HorizontalAlignment.Right);
 
-        _btnAnalyse = new Button { Text = "Analyseer", Width = 120, Anchor = AnchorStyles.Right };
-        _btnCancel = new Button { Text = "Cancel", Width = 120, Anchor = AnchorStyles.Right };
-        _btnExportXml = new Button { Text = "Export XML", Width = 120, Anchor = AnchorStyles.Right, Enabled = false };
-
-        _lblStatus = new Label
-        {
-            Text = "Ready.",
-            AutoSize = true,
-            Anchor = AnchorStyles.Right,
-            Padding = new Padding(10, 4, 10, 4),
-            BorderStyle = BorderStyle.FixedSingle
-        };
-
-        _btnAnalyse.Click += async (_, __) => await AnalyseAsync();
-        _btnCancel.Click += (_, __) => CancelRun();
-        _btnExportXml.Click += (_, __) => ExportXml();
-
-        // ---------- Root ----------
-        var root = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 2
-        };
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        Controls.Add(root);
-
-        root.Controls.Add(BuildHeaderBar(), 0, 0);
-
-        // ---------- Splitters ----------
-        _splitA = new SplitContainer
-        {
-            Dock = DockStyle.Fill,
-            Orientation = Orientation.Horizontal,
-            SplitterWidth = 8,
-            Panel1MinSize = 140,
-            Panel2MinSize = 240
-        };
-        root.Controls.Add(_splitA, 0, 1);
-
-        _splitB = new SplitContainer
-        {
-            Dock = DockStyle.Fill,
-            Orientation = Orientation.Horizontal,
-            SplitterWidth = 8,
-            Panel1MinSize = 140, // preview
-            Panel2MinSize = 240  // advice
-        };
-        _splitA.Panel2.Controls.Add(_splitB);
+        // ---------- Buttons ----------
+        _btnAnalyse = MakeButton("Analyseer", 95, async (_, __) => await AnalyseAsync());
+        _btnExportXml = MakeButton("Export XML", 95, (_, __) => ExportXml());
+        _btnExportXml.Enabled = false;
 
         // ---------- Cards ----------
-        _splitA.Panel1.Controls.Add(BuildCard(
-            title: "Input (plak hier je EBO/Excel export):",
-            rightButtons: new[]
-            {
-                MakeButton("Plak (vervang)", 130, (_, __) => PasteReplaceFromClipboard()),
-                MakeButton("Clear", 90, (_, __) =>
-                {
-                    _txtInput.Clear();
-                    Log.Info("modbus", "CLICK Clear input");
-                })
-            },
-            content: _txtInput
-        ));
+        var inputCard = BuildCard("Input (Ctrl+V = replace)", _gridInput);
+        var previewCard = BuildCard("Preview", _lvPreview);
+        var adviceCard = BuildCard("Advice", _lvAdvice);
 
-        _splitB.Panel1.Controls.Add(BuildCard(
-            title: "Preview (wat er uit de input wordt ingelezen):",
-            rightButtons: Array.Empty<Control>(),
-            content: _gridPreview
-        ));
-
-        _splitB.Panel2.Controls.Add(BuildCard(
-            title: "Advies (groepen + onderliggende registers):",
-            rightButtons: Array.Empty<Control>(),
-            content: _lvAdvice
-        ));
-
-        // ---------- Apply split distances SAFELY after layout ----------
-        Shown += (_, __) =>
-        {
-            Log.Info("modbus", "ModbusGroupAdvisor tool opened");
-            BeginInvoke(new Action(ApplyInitialSplitLayoutSafe));
-        };
-
-        // If the user resizes, keep it sane (but don't fight the user constantly)
-        ResizeEnd += (_, __) =>
-        {
-            // Only auto-apply once; after that, user owns the splitters
-            if (!_initialSplitApplied) return;
-            // No-op: if you want “auto re-balance on resize”, we can enable it later.
-        };
-
-        UpdateUiRunningState(false);
-    }
-
-    private Control BuildHeaderBar()
-    {
-        var header = new TableLayoutPanel
-        {
-            Dock = DockStyle.Top,
-            AutoSize = true,
-            Padding = new Padding(12, 12, 12, 8),
-            ColumnCount = 6
-        };
-
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-
-        var lblTitle = new Label
-        {
-            Text = "Modbus Group Advisor",
-            AutoSize = true,
-            Anchor = AnchorStyles.Left,
-            Font = new System.Drawing.Font(System.Drawing.SystemFonts.DefaultFont, System.Drawing.FontStyle.Bold)
-        };
-        header.Controls.Add(lblTitle, 0, 0);
-
-        header.Controls.Add(_btnAnalyse, 2, 0);
-        header.Controls.Add(_btnCancel, 3, 0);
-        header.Controls.Add(_btnExportXml, 4, 0);
-        header.Controls.Add(_lblStatus, 5, 0);
-
-        return header;
-    }
-
-    private static Control BuildCard(string title, Control[] rightButtons, Control content)
-    {
-        var outer = new Panel
+        // ---------- SplitContainers ----------
+        _splitLeft = new SplitContainer
         {
             Dock = DockStyle.Fill,
-            Padding = new Padding(12, 8, 12, 12),
-            BorderStyle = BorderStyle.FixedSingle
+            Orientation = Orientation.Horizontal,
+            Panel1MinSize = 0,
+            Panel2MinSize = 0,
+            SplitterWidth = 6
         };
+        _splitLeft.Panel1.Controls.Add(inputCard);
+        _splitLeft.Panel2.Controls.Add(previewCard);
 
-        var layout = new TableLayoutPanel
+        _splitMain = new SplitContainer
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 2
+            Orientation = Orientation.Vertical,
+            Panel1MinSize = 0,
+            Panel2MinSize = 0,
+            SplitterWidth = 6
         };
-        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        outer.Controls.Add(layout);
+        _splitMain.Panel1.Controls.Add(_splitLeft);
+        _splitMain.Panel2.Controls.Add(adviceCard);
 
-        var header = new TableLayoutPanel
+        var topBar = new FlowLayoutPanel
         {
             Dock = DockStyle.Top,
-            AutoSize = true,
-            ColumnCount = 2,
-            Padding = new Padding(0, 0, 0, 8)
-        };
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-
-        header.Controls.Add(new Label
-        {
-            Text = title,
-            AutoSize = true,
-            Anchor = AnchorStyles.Left
-        }, 0, 0);
-
-        var btnHost = new FlowLayoutPanel
-        {
             AutoSize = true,
             FlowDirection = FlowDirection.LeftToRight,
             WrapContents = false,
-            Anchor = AnchorStyles.Right
+            Padding = new Padding(4)
         };
+        topBar.Controls.Add(_btnAnalyse);
+        topBar.Controls.Add(_btnExportXml);
 
-        foreach (var b in rightButtons)
-        {
-            b.Margin = new Padding(6, 0, 0, 0);
-            btnHost.Controls.Add(b);
-        }
+        var root = new Panel { Dock = DockStyle.Fill, Padding = new Padding(4) };
+        root.Controls.Add(_splitMain);
+        root.Controls.Add(topBar);
+        Controls.Add(root);
 
-        header.Controls.Add(btnHost, 1, 0);
-
-        layout.Controls.Add(header, 0, 0);
-        layout.Controls.Add(content, 0, 1);
-
-        return outer;
-    }
-
-    private static Button MakeButton(string text, int width, EventHandler onClick)
-    {
-        var b = new Button { Text = text, Width = width };
-        b.Click += onClick;
-        return b;
-    }
-
-    private void ApplyInitialSplitLayoutSafe()
-    {
-        if (_initialSplitApplied) return;
-
-        try
-        {
-            // Desired proportions:
-            // - splitA: input ~40% height
-            // - splitB: preview ~20% of its height (advice big)
-            var desiredA = (int)(ClientSize.Height * 0.40);
-            var desiredB = (int)(ClientSize.Height * 0.20);
-
-            SafeSetSplitterDistance(_splitA, desiredA, "splitA");
-            SafeSetSplitterDistance(_splitB, desiredB, "splitB");
-
-            _initialSplitApplied = true;
-
-            Log.Info("modbus",
-                $"Split init ok: clientH={ClientSize.Height} splitA={_splitA.SplitterDistance} splitB={_splitB.SplitterDistance}");
-        }
-        catch (Exception ex)
-        {
-            Log.Warn("modbus", $"Split init failed: {ex.GetType().Name}: {ex.Message}\n{ex}");
-            // Do not crash the tool
-        }
-    }
-
-    private static void SafeSetSplitterDistance(SplitContainer sc, int desired, string tag)
-    {
-        // Total usable size depends on orientation
-        int total = sc.Orientation == Orientation.Horizontal ? sc.Height : sc.Width;
-
-        // During early layout this can be 0 or very small
-        if (total <= 0)
-            return;
-
-        // WinForms constraint: distance must be between Panel1MinSize and (total - Panel2MinSize - SplitterWidth)
-        int min = sc.Panel1MinSize;
-        int max = total - sc.Panel2MinSize - sc.SplitterWidth;
-
-        if (max < min)
-        {
-            // Can't satisfy mins with this size; skip
-            return;
-        }
-
-        int clamped = desired;
-        if (clamped < min) clamped = min;
-        if (clamped > max) clamped = max;
-
-        // Only set if actually different (prevents churn)
-        if (sc.SplitterDistance != clamped)
-            sc.SplitterDistance = clamped;
+        Shown += (_, __) => BeginInvoke((Action)ApplyInitialSplitLayoutSafe);
     }
 
     protected override void UpdateUiRunningState(bool isRunning)
     {
         _btnAnalyse.Enabled = !isRunning;
-        _btnCancel.Enabled = isRunning;
-
-        _txtInput.ReadOnly = isRunning;
-
+        _gridInput.Enabled = !isRunning;
         _btnExportXml.Enabled = !isRunning && _last is not null && _last.Groups.Count > 0;
     }
 
     protected override void OnProgress(ToolProgressInfo p)
     {
-        _lblStatus.Text = $"{p.Phase}: {p.Message}";
+        // no UI progress header (requested)
     }
 
-    // ---- Paste: replace whole input and normalize newlines ----
-    private void PasteReplaceFromClipboard()
+    private void ApplyInitialSplitLayoutSafe()
+    {
+        if (_initialSplitApplied) return;
+        _initialSplitApplied = true;
+
+        try
+        {
+            _splitMain.Panel1MinSize = 260;
+            _splitMain.Panel2MinSize = 420;
+            _splitLeft.Panel1MinSize = 240;
+            _splitLeft.Panel2MinSize = 220;
+
+            var desiredMain = (int)(ClientSize.Width * 0.52);
+            var desiredLeft = (int)(ClientSize.Height * 0.48);
+
+            SafeSetSplitterDistance(_splitMain, desiredMain);
+            SafeSetSplitterDistance(_splitLeft, desiredLeft);
+
+            Log.Info("modbus",
+                $"Split init ok: clientW={ClientSize.Width} clientH={ClientSize.Height} " +
+                $"splitMain={_splitMain.SplitterDistance} splitLeft={_splitLeft.SplitterDistance}");
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("modbus", $"Split init failed (non-fatal): {ex.GetType().Name}: {ex.Message}\n{ex}");
+        }
+    }
+
+    private static void SafeSetSplitterDistance(SplitContainer sc, int desired)
+    {
+        var total = sc.Orientation == Orientation.Vertical ? sc.Width : sc.Height;
+        if (total <= 0) return;
+
+        var min = sc.Panel1MinSize;
+        var max = total - sc.Panel2MinSize - sc.SplitterWidth;
+        if (max < min) { min = 0; max = Math.Max(0, total - sc.SplitterWidth); }
+
+        var clamped = Math.Max(min, Math.Min(max, desired));
+        if (sc.SplitterDistance != clamped) sc.SplitterDistance = clamped;
+    }
+
+    // ---------------- Input grid paste / parse ----------------
+
+    private void PasteReplaceGridFromClipboard()
     {
         try
         {
             var txt = Clipboard.GetText();
-            if (string.IsNullOrEmpty(txt))
+            if (string.IsNullOrWhiteSpace(txt))
+            {
+                Log.Info("modbus", "PasteReplaceGrid: clipboard empty");
+                return;
+            }
+
+            txt = txt.Replace("\r\n", "\n").Replace("\r", "\n");
+            var lines = txt.Split('\n');
+
+            // remove trailing empty lines
+            while (lines.Length > 0 && string.IsNullOrWhiteSpace(lines[^1]))
+                lines = lines.Take(lines.Length - 1).ToArray();
+
+            if (lines.Length == 0)
                 return;
 
-            txt = txt.Replace("\r\n", "\n").Replace("\r", "\n").Replace("\n", Environment.NewLine);
+            var rows = new List<string[]>();
+            int maxCols = 0;
 
-            _txtInput.Text = txt;
-            _txtInput.SelectionStart = _txtInput.TextLength;
-            _txtInput.ScrollToCaret();
+            foreach (var line in lines)
+            {
+                var cols = line.Split('\t');
+                rows.Add(cols);
+                if (cols.Length > maxCols) maxCols = cols.Length;
+            }
 
-            Log.Info("modbus", $"PasteReplace ok len={txt.Length}");
+            if (maxCols <= 0)
+                return;
+
+            // First row is header
+            var header = rows[0];
+            BuildGridColumns(header, maxCols);
+
+            _gridInput.Rows.Clear();
+
+            // Data rows start at 1
+            for (int i = 1; i < rows.Count; i++)
+            {
+                var cols = rows[i];
+                var arr = new object[maxCols];
+                for (int c = 0; c < maxCols; c++)
+                    arr[c] = c < cols.Length ? cols[c] : "";
+
+                _gridInput.Rows.Add(arr);
+            }
+
+            AutoSizeGridColumns(sampleRows: Math.Min(80, _gridInput.Rows.Count));
+            Log.Info("modbus", $"PasteReplaceGrid ok rows={_gridInput.Rows.Count} cols={_gridInput.Columns.Count} rawLen={txt.Length}");
         }
         catch (Exception ex)
         {
-            Log.Warn("modbus", $"Clipboard paste failed: {ex.GetType().Name}: {ex.Message}\n{ex}");
-            MessageBox.Show(this, "Plakken uit klembord mislukt. Zie log (Alt+L).", "Clipboard",
+            Log.Warn("modbus", $"PasteReplaceGrid failed: {ex.GetType().Name}: {ex.Message}\n{ex}");
+            MessageBox.Show(this, "Plakken naar grid mislukt. Zie log (Alt+L).", "Clipboard",
                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
+
+    private void BuildGridColumns(string[] header, int maxCols)
+    {
+        _gridInput.SuspendLayout();
+
+        _gridInput.Columns.Clear();
+
+        for (int c = 0; c < maxCols; c++)
+        {
+            var name = c < header.Length && !string.IsNullOrWhiteSpace(header[c]) ? header[c] : $"Col {c + 1}";
+            var col = new DataGridViewTextBoxColumn
+            {
+                HeaderText = name,
+                Name = $"col_{c}",
+                SortMode = DataGridViewColumnSortMode.NotSortable,
+                AutoSizeMode = DataGridViewAutoSizeColumnMode.None,
+                MinimumWidth = 80
+            };
+            _gridInput.Columns.Add(col);
+        }
+
+        _gridInput.ResumeLayout();
+    }
+
+    private void AutoSizeGridColumns(int sampleRows)
+    {
+        try
+        {
+            if (_gridInput.Columns.Count == 0) return;
+
+            using var g = _gridInput.CreateGraphics();
+
+            for (int c = 0; c < _gridInput.Columns.Count; c++)
+            {
+                var col = _gridInput.Columns[c];
+
+                int w = TextRenderer.MeasureText(col.HeaderText, _gridInput.ColumnHeadersDefaultCellStyle.Font ?? _gridInput.Font).Width + 30;
+
+                for (int r = 0; r < sampleRows; r++)
+                {
+                    var v = _gridInput.Rows[r].Cells[c].Value?.ToString() ?? "";
+                    if (v.Length > 120) v = v.Substring(0, 120);
+                    var vw = TextRenderer.MeasureText(v, _gridInput.Font).Width + 26;
+                    if (vw > w) w = vw;
+                    if (w > 520) { w = 520; break; }
+                }
+
+                if (w < 90) w = 90;
+                if (w > 520) w = 520;
+
+                col.Width = w;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("modbus", $"AutoSizeGridColumns failed (non-fatal): {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    private string BuildRawFromGrid()
+    {
+        if (_gridInput.Columns.Count == 0)
+            return "";
+
+        var sb = new StringBuilder();
+
+        // header
+        sb.Append(string.Join("\t", _gridInput.Columns.Cast<DataGridViewColumn>().Select(c => c.HeaderText)));
+        sb.AppendLine();
+
+        // rows
+        foreach (DataGridViewRow row in _gridInput.Rows)
+        {
+            if (row.IsNewRow) continue;
+
+            var cells = new string[_gridInput.Columns.Count];
+            for (int i = 0; i < cells.Length; i++)
+                cells[i] = row.Cells[i].Value?.ToString() ?? "";
+
+            // trim trailing empty columns to keep text nicer
+            int end = cells.Length;
+            while (end > 1 && string.IsNullOrWhiteSpace(cells[end - 1]))
+                end--;
+
+            sb.Append(string.Join("\t", cells.Take(end)));
+            sb.AppendLine();
+        }
+
+        return sb.ToString();
+    }
+
+    // ---------------- Icon loading ----------------
+
+    private void TryLoadAdviceIcon()
+    {
+        try
+        {
+            var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "group_icon.png");
+            if (!File.Exists(iconPath))
+            {
+                Log.Warn("modbus", $"Advice icon missing: '{iconPath}'");
+                return;
+            }
+
+            using var bmp = new Bitmap(iconPath);
+
+            _adviceImages.Images.RemoveByKey(AdviceIconGroupKey);
+            _adviceImages.Images.Add(AdviceIconGroupKey, new Bitmap(bmp));
+
+            Log.Info("modbus", $"Advice icon loaded: '{iconPath}' size={bmp.Width}x{bmp.Height}");
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("modbus", $"Advice icon load failed (non-fatal): {ex.GetType().Name}: {ex.Message}\n{ex}");
+        }
+    }
+
+    // ---------------- Run / Export ----------------
 
     private async System.Threading.Tasks.Task AnalyseAsync()
     {
@@ -390,12 +450,13 @@ public sealed class ModbusGroupAdvisorToolForm : ToolBaseForm
         ClearPreview();
         ClearAdvice();
 
+        var raw = BuildRawFromGrid();
+
         var tool = new ModbusGroupAdvisorTool();
-
         var parameters = ToolParameters.Empty
-            .With(ModbusGroupAdvisorParameterKeys.RawText, _txtInput.Text ?? "");
+            .With(ModbusGroupAdvisorParameterKeys.RawText, raw);
 
-        var result = await RunToolAsync(
+        _ = await RunToolAsync(
             tool: tool,
             parameters: parameters,
             toolLogTag: "modbus",
@@ -411,13 +472,13 @@ public sealed class ModbusGroupAdvisorToolForm : ToolBaseForm
                         _last = JsonSerializer.Deserialize<ModbusAnalysisResultDto>(json);
                         if (_last != null)
                         {
-                            PopulatePreview(_last.PreviewRows);
-                            PopulateAdvice(_last.Groups);
+                            PopulatePreview(_last.PreviewRows, _last.RejectedRows);
+                            PopulateAdviceLikePython(_last.Groups);
+                            Log.Info("modbus", $"UI populated: previewOk={_last.PreviewRows.Count} rejected={_last.RejectedRows.Count} groups={_last.Groups.Count}");
                         }
                     }
 
                     _btnExportXml.Enabled = _last is not null && _last.Groups.Count > 0;
-                    _lblStatus.Text = $"Done. Groups={_last?.Groups.Count ?? 0} Preview={_last?.PreviewRows.Count ?? 0}";
 
                     if (r.Warnings.Count > 0)
                     {
@@ -429,14 +490,14 @@ public sealed class ModbusGroupAdvisorToolForm : ToolBaseForm
                 return System.Threading.Tasks.Task.CompletedTask;
             },
             showWarningsOnSuccess: false,
-            successMessageFactory: _ => "Analyse klaar.");
-
-        if (!result.Success)
-            _lblStatus.Text = "Failed/Blocked.";
+            successMessageFactory: _ => ""
+        );
     }
 
     private void ExportXml()
     {
+        Log.Info("modbus", "CLICK Export XML");
+
         if (_last is null || _last.Groups.Count == 0)
         {
             MessageBox.Show(this, "Er zijn nog geen registergroepen om te exporteren.", "Geen groepen",
@@ -460,14 +521,16 @@ public sealed class ModbusGroupAdvisorToolForm : ToolBaseForm
         };
 
         if (sfd.ShowDialog(this) != DialogResult.OK)
+        {
+            Log.Info("modbus", "Export canceled by user");
             return;
+        }
 
         try
         {
-            System.IO.File.WriteAllText(sfd.FileName, _lastXml, Encoding.UTF8);
+            File.WriteAllText(sfd.FileName, _lastXml, Encoding.UTF8);
             Log.Info("modbus", $"Export XML OK: '{sfd.FileName}' len={_lastXml.Length}");
-            MessageBox.Show(this, $"XML opgeslagen:\n{sfd.FileName}", "Export geslaagd",
-                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show(this, $"XML opgeslagen:\n{sfd.FileName}", "Export geslaagd", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
@@ -476,7 +539,14 @@ public sealed class ModbusGroupAdvisorToolForm : ToolBaseForm
         }
     }
 
-    private void ClearPreview() => _gridPreview.Rows.Clear();
+    // ---------------- Preview / Advice populate ----------------
+
+    private void ClearPreview()
+    {
+        _lvPreview.BeginUpdate();
+        _lvPreview.Items.Clear();
+        _lvPreview.EndUpdate();
+    }
 
     private void ClearAdvice()
     {
@@ -485,85 +555,189 @@ public sealed class ModbusGroupAdvisorToolForm : ToolBaseForm
         _lvAdvice.EndUpdate();
     }
 
-    private void PopulatePreview(List<ModbusPreviewRowDto> rows)
+    private void PopulatePreview(List<ModbusPreviewRowDto> rows, List<ModbusRejectedRowDto> rejected)
     {
-        _gridPreview.SuspendLayout();
-        _gridPreview.Rows.Clear();
+        _lvPreview.BeginUpdate();
+        _lvPreview.Items.Clear();
 
         foreach (var r in rows)
-            _gridPreview.Rows.Add(r.Name, r.Address, r.Length, r.FunctionCode, r.RegType, r.RawType);
+        {
+            var li = new ListViewItem(r.Name);
+            li.SubItems.Add(r.Address.ToString());
+            li.SubItems.Add(r.Length.ToString());
+            li.SubItems.Add(r.FunctionCode.ToString());
+            li.SubItems.Add(r.RegType);
+            li.SubItems.Add(r.RawType ?? "");
+            li.SubItems.Add("OK");
+            _lvPreview.Items.Add(li);
+        }
 
-        _gridPreview.ResumeLayout();
-        Log.Info("modbus", $"Preview populated rows={rows.Count}");
+        foreach (var bad in rejected)
+        {
+            var name = bad.Name ?? $"Row {bad.RowNumber}";
+            var li = new ListViewItem(name);
+
+            li.SubItems.Add("");
+            li.SubItems.Add("");
+            li.SubItems.Add("");
+            li.SubItems.Add("");
+            li.SubItems.Add("");
+            li.SubItems.Add($"ERROR: {bad.Reason}");
+
+            li.ForeColor = Color.Red;
+            li.ToolTipText = bad.RawLine;
+
+            _lvPreview.Items.Add(li);
+        }
+
+        _lvPreview.EndUpdate();
+        Log.Info("modbus", $"Preview populated: ok={rows.Count} rejected={rejected.Count}");
     }
 
-    private void PopulateAdvice(List<ModbusGroupDto> groups)
+    private void PopulateAdviceLikePython(List<ModbusGroupDto> groups)
     {
         _lvAdvice.BeginUpdate();
         _lvAdvice.Items.Clear();
 
-        foreach (var g in groups)
+        foreach (var g in groups.OrderBy(x => x.GroupId))
         {
-            var unitLabel = g.RegType == "register" ? $"{g.TotalUnits} regs" : $"{g.TotalUnits} bits";
-            var gapsLabel = g.HasGaps ? "Ja" : "Nee";
-            var comment = g.HasGaps
-                ? "Bevat lege adressen binnen range – controleer device."
+            var isCoil = string.Equals(g.RegType, "coil", StringComparison.OrdinalIgnoreCase);
+            var regsBits = isCoil ? $"{g.TotalUnits} bits" : $"{g.TotalUnits} regs";
+            var gaps = g.HasGaps ? "Ja" : "Nee";
+
+            var opmerking = g.HasGaps
+                ? "Bevat lege adressen binnen range – controleer dev"
                 : "Compacte groep.";
 
-            var liGroup = new ListViewItem($"GROUP {g.GroupId}");
-            liGroup.SubItems.Add($"FC{g.FunctionCode}");
-            liGroup.SubItems.Add(g.RegType);
-            liGroup.SubItems.Add(g.StartAddress.ToString());
-            liGroup.SubItems.Add(g.EndAddress.ToString());
-            liGroup.SubItems.Add(unitLabel);
-            liGroup.SubItems.Add(g.NumPoints.ToString());
-            liGroup.SubItems.Add(gapsLabel);
-            liGroup.SubItems.Add(comment);
-            liGroup.SubItems.Add("");
-            liGroup.SubItems.Add("");
+            var groupTitle = $"GROUP {g.GroupId}  |  FC{g.FunctionCode}  {g.StartAddress}-{g.EndAddress}";
 
-            liGroup.BackColor = System.Drawing.Color.FromArgb(242, 242, 242);
-            liGroup.Font = new System.Drawing.Font(_lvAdvice.Font, System.Drawing.FontStyle.Bold);
+            var groupItem = new ListViewItem(groupTitle)
+            {
+                ImageKey = AdviceIconGroupKey,
+                Font = new Font(_lvAdvice.Font, FontStyle.Bold),
+                BackColor = SystemColors.ControlLight
+            };
 
-            _lvAdvice.Items.Add(liGroup);
+            groupItem.SubItems.Add(g.FunctionCode.ToString());
+            groupItem.SubItems.Add(g.RegType);
+            groupItem.SubItems.Add(g.StartAddress.ToString());
+            groupItem.SubItems.Add(g.EndAddress.ToString());
+            groupItem.SubItems.Add(regsBits);
+            groupItem.SubItems.Add(g.NumPoints.ToString());
+            groupItem.SubItems.Add(gaps);
+            groupItem.SubItems.Add("");
+            _lvAdvice.Items.Add(groupItem);
+
+            if (!string.IsNullOrWhiteSpace(opmerking))
+            {
+                var noteItem = new ListViewItem($"Opmerking: {opmerking}")
+                {
+                    IndentCount = 1,
+                    ForeColor = SystemColors.GrayText,
+                    Tag = AdviceRowKind_Remark,
+                    ToolTipText = opmerking
+                };
+                while (noteItem.SubItems.Count < _lvAdvice.Columns.Count)
+                    noteItem.SubItems.Add("");
+                _lvAdvice.Items.Add(noteItem);
+            }
 
             foreach (var e in g.Entries.OrderBy(x => x.Address))
             {
-                var liPoint = new ListViewItem($"   ↳ {e.Name}");
-                liPoint.SubItems.Add($"FC{e.FunctionCode}");
-                liPoint.SubItems.Add(e.RegType);
-                liPoint.SubItems.Add("");
-                liPoint.SubItems.Add("");
-                liPoint.SubItems.Add("");
-                liPoint.SubItems.Add("");
-                liPoint.SubItems.Add("");
-                liPoint.SubItems.Add("");
-                liPoint.SubItems.Add(e.Address.ToString());
-                liPoint.SubItems.Add(e.Length.ToString());
+                var start = e.Address;
+                var end = e.Address + Math.Max(1, e.Length) - 1;
 
-                _lvAdvice.Items.Add(liPoint);
+                var title = $"{e.Name} ({start})";
+                var pointItem = new ListViewItem(title) { IndentCount = 1 };
+
+                pointItem.SubItems.Add(e.FunctionCode.ToString());
+                pointItem.SubItems.Add(e.RegType);
+                pointItem.SubItems.Add(start.ToString());
+                pointItem.SubItems.Add(end.ToString());
+                pointItem.SubItems.Add("");
+                pointItem.SubItems.Add("");
+                pointItem.SubItems.Add("");
+                pointItem.SubItems.Add(e.Length.ToString());
+
+                _lvAdvice.Items.Add(pointItem);
             }
         }
 
         _lvAdvice.EndUpdate();
-        Log.Info("modbus", $"Advice populated groups={groups.Count} items={_lvAdvice.Items.Count}");
-
-        AutoSizeAdviceColumns();
+        Log.Info("modbus", $"Advice populated: groups={groups.Count} items={_lvAdvice.Items.Count}");
     }
 
-    private void AutoSizeAdviceColumns()
+    private void DrawRemarkRowSubItem(DrawListViewSubItemEventArgs e)
     {
-        try
-        {
-            for (int i = 0; i < _lvAdvice.Columns.Count; i++)
-                _lvAdvice.Columns[i].Width = -2;
+        var item = e.Item;
+        if (item is null) return;
 
-            _lvAdvice.Columns[0].Width = Math.Max(_lvAdvice.Columns[0].Width, 260);
-            _lvAdvice.Columns[8].Width = Math.Max(_lvAdvice.Columns[8].Width, 320);
-        }
-        catch (Exception ex)
+        if (e.ColumnIndex != 0) return;
+
+        var lv = item.ListView;
+        if (lv is null) return;
+
+        var rowRect = lv.GetItemRect(e.ItemIndex);
+        var full = new Rectangle(rowRect.Left, rowRect.Top, lv.ClientSize.Width, rowRect.Height);
+
+        using var bg = new SolidBrush(item.Selected ? SystemColors.Highlight : lv.BackColor);
+        e.Graphics.FillRectangle(bg, full);
+
+        var textColor = item.Selected ? SystemColors.HighlightText : item.ForeColor;
+
+        var font = item.Font ?? lv.Font; // <-- fix: fallback
+        TextRenderer.DrawText(
+            e.Graphics,
+            item.Text ?? "",
+            font,
+            Rectangle.Inflate(full, -6, 0),
+            textColor,
+            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix
+        );
+
+        if (item.Selected)
+            ControlPaint.DrawFocusRectangle(e.Graphics, full);
+    }
+
+
+    private static Control BuildCard(string title, Control content)
+    {
+        var outer = new Panel
         {
-            Log.Warn("modbus", $"AutoSizeAdviceColumns failed: {ex.GetType().Name}: {ex.Message}");
-        }
+            Dock = DockStyle.Fill,
+            Padding = new Padding(6, 4, 6, 6),
+            BorderStyle = BorderStyle.FixedSingle
+        };
+
+        var layout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2
+        };
+        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        var header = new Label
+        {
+            Text = title,
+            AutoSize = true,
+            Dock = DockStyle.Top,
+            Font = new Font(SystemFonts.DefaultFont, FontStyle.Bold),
+            Padding = new Padding(0, 0, 0, 4)
+        };
+
+        layout.Controls.Add(header, 0, 0);
+        layout.Controls.Add(content, 0, 1);
+
+        outer.Controls.Add(layout);
+        return outer;
+    }
+
+    private static Button MakeButton(string text, int width, EventHandler onClick)
+    {
+        var b = new Button { Text = text, Width = width };
+        b.Click += onClick;
+        return b;
     }
 }

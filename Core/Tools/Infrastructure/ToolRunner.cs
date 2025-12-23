@@ -34,15 +34,22 @@ public static class ToolRunner
             .WithWarnings(result.Warnings)
             .WithOutputs(result.Outputs);
 
-            if (stamped.Canceled)
-                Log.Warn(ToolLogTags.Runner, $"CANCELED tool='{tool.ToolKey}' runId='{ctx.RunId}' ms={stamped.DurationMs} summary='{stamped.Summary}'");
-            else if (!stamped.Success)
-                Log.Error(ToolLogTags.Runner, $"FAIL tool='{tool.ToolKey}' runId='{ctx.RunId}' ms={stamped.DurationMs} summary='{stamped.Summary}'");
-            else
-                Log.Info(ToolLogTags.Runner, $"OK tool='{tool.ToolKey}' runId='{ctx.RunId}' ms={stamped.DurationMs} summary='{stamped.Summary}'");
+            var warningsCount = stamped.Warnings.Count;
+            var outputsCount = stamped.Outputs.Count;
 
-            if (stamped.Warnings.Count > 0)
-                Log.Warn(ToolLogTags.Runner, $"WARNINGS tool='{tool.ToolKey}' runId='{ctx.RunId}' count={stamped.Warnings.Count}");
+            if (stamped.Canceled)
+                Log.Warn(ToolLogTags.Runner,
+                    $"CANCELED tool='{tool.ToolKey}' runId='{ctx.RunId}' ms={stamped.DurationMs} summary='{stamped.Summary}' warnings={warningsCount} outputs={outputsCount}");
+            else if (!stamped.Success)
+                Log.Error(ToolLogTags.Runner,
+                    $"FAIL tool='{tool.ToolKey}' runId='{ctx.RunId}' ms={stamped.DurationMs} summary='{stamped.Summary}' warnings={warningsCount} outputs={outputsCount}");
+            else
+                Log.Info(ToolLogTags.Runner,
+                    $"OK tool='{tool.ToolKey}' runId='{ctx.RunId}' ms={stamped.DurationMs} summary='{stamped.Summary}' warnings={warningsCount} outputs={outputsCount}");
+
+            if (warningsCount > 0)
+                Log.Warn(ToolLogTags.Runner,
+                    $"WARNINGS tool='{tool.ToolKey}' runId='{ctx.RunId}' count={warningsCount}");
 
             return stamped;
         }
@@ -70,9 +77,14 @@ public static class ToolRunner
         }
         catch (OperationCanceledException)
         {
+            Log.Warn(ToolLogTags.Runner,
+                $"CANCEL tool='{tool.ToolKey}' runId='{ctx.RunId}' ms={sw.ElapsedMilliseconds} paramsCount={ctx.Parameters.Count}" +
+                (string.IsNullOrWhiteSpace(paramLog) ? "" : $" params={paramLog}"));
+
             var canceled = ToolResult.CanceledResult("Canceled");
             return FinalizeResult(canceled, DateTime.UtcNow);
         }
+
         catch (Exception ex)
         {
             var failed = ToolResult.Fail($"Exception: {ex.GetType().Name}: {ex.Message}");
