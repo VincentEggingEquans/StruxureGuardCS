@@ -7,22 +7,31 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
-<ItemGroup>
-  <!-- Exclude ChatGPT export/stage folders from compilation -->
-  <Compile Remove="_chatgpt_export\**\*.cs" />
-  <EmbeddedResource Remove="_chatgpt_export\**\*" />
-  <None Remove="_chatgpt_export\**\*" />
-  <Content Remove="_chatgpt_export\**\*" />
 
-  <Compile Remove="OLD\**\*.cs" />
-  <EmbeddedResource Remove="OLD\**\*" />
-  <None Remove="OLD\**\*" />
-  <Content Remove="OLD\**\*" />
+  <ItemGroup>
+    <!-- Exclude ChatGPT export/stage folders from compilation -->
+    <Compile Remove="_chatgpt_export\**\*.cs" />
+    <EmbeddedResource Remove="_chatgpt_export\**\*" />
+    <None Remove="_chatgpt_export\**\*" />
+    <Content Remove="_chatgpt_export\**\*" />
 
-  <!-- Modbus Advisor: group icon copied to output as /Assets/group_icon.png -->
-  <Content Include="UI\Assets\group_icon.png">
-    <Link>Assets\group_icon.png</Link>
-    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-  </Content>
-</ItemGroup>
+    <!-- Exclude OLD folder from compilation -->
+    <Compile Remove="OLD\**\*.cs" />
+    <EmbeddedResource Remove="OLD\**\*" />
+    <None Remove="OLD\**\*" />
+    <Content Remove="OLD\**\*" />
+
+    <!-- Exclude Agent folder from compilation (separate project) -->
+    <Compile Remove="Agent\**\*.cs" />
+    <EmbeddedResource Remove="Agent\**\*" />
+    <None Remove="Agent\**\*" />
+    <Content Remove="Agent\**\*" />
+
+    <!-- Modbus Advisor: group icon copied to output as /Assets/group_icon.png -->
+    <Content Include="UI\Assets\group_icon.png">
+      <Link>Assets\group_icon.png</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>

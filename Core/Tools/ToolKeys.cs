@@ -10,4 +10,5 @@ public static class ToolKeys
     public const string AspPathChecker = "asppathchecker";
     public const string NotificationPullerConfig = "notifpuller";
     public const string ModbusGroupAdvisor = "modbusadvisor";
+    public const string NotificationPullerAgentPublisher = "notifpuller-agentpublisher";
 }

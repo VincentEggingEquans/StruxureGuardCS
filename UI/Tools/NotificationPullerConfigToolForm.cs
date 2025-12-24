@@ -5,6 +5,7 @@ using System.Windows.Forms;
 using StruxureGuard.Core.Logging;
 using StruxureGuard.Core.Tools.Infrastructure;
 using StruxureGuard.Core.Tools.NotificationPullerConfig;
+using StruxureGuard.Core.Tools.NotificationPullerAgentPublisher;
 
 namespace StruxureGuard.UI.Tools;
 
@@ -37,6 +38,8 @@ public sealed class NotificationPullerConfigToolForm : ToolBaseForm
 
     private readonly TextBox _txtPreview;
     private readonly Label _lblStatus;
+
+    private readonly Button _btnBuildAgent;
 
     public NotificationPullerConfigToolForm()
     {
@@ -286,6 +289,14 @@ public sealed class NotificationPullerConfigToolForm : ToolBaseForm
         left.SetColumnSpan(_btnGenerate, 2);
         r++;
 
+        _btnBuildAgent = new Button { Text = "Agent bouwen (EXE)...", Height = 34, Dock = DockStyle.Top };
+        _btnBuildAgent.Click += (_, _) => RunBuildAgent();
+
+        left.Controls.Add(_btnBuildAgent, 0, r);
+        left.SetColumnSpan(_btnBuildAgent, 2);
+        r++;
+
+
         // Right: preview
         var right = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 1, Padding = new Padding(10) };
         right.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -409,4 +420,85 @@ public sealed class NotificationPullerConfigToolForm : ToolBaseForm
         input.Anchor = AnchorStyles.Left | AnchorStyles.Right;
         tlp.Controls.Add(input, 1, row);
     }
+
+    private void RunBuildAgent()
+    {
+        const string tag = "notifcfg";
+        Log.Info(tag, "ui: build-agent clicked");
+
+        // 1) kies output folder
+        string? outDir = null;
+        using (var fbd = new FolderBrowserDialog
+        {
+            Description = "Kies outputmap voor de agent (publish output)",
+            UseDescriptionForTitle = true,
+            ShowNewFolderButton = true
+        })
+        {
+            if (fbd.ShowDialog(this) != DialogResult.OK)
+            {
+                Log.Info(tag, "ui: build-agent canceled (no folder chosen)");
+                return;
+            }
+            outDir = fbd.SelectedPath;
+        }
+
+        // 2) kies config pad (bij voorkeur uit textbox; anders open file dialog)
+        var cfgPath = (_txtConfigPath.Text ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(cfgPath) || !File.Exists(cfgPath))
+        {
+            Log.Warn(tag, $"ui: config path missing/not found: '{cfgPath}' -> prompt OpenFileDialog");
+
+            using var ofd = new OpenFileDialog
+            {
+                Filter = "JSON files (*.json)|*.json|All files (*.*)|*.*",
+                Title = "Selecteer notificationpuller_config.json"
+            };
+
+            if (ofd.ShowDialog(this) != DialogResult.OK)
+            {
+                Log.Info(tag, "ui: build-agent canceled (no config chosen)");
+                return;
+            }
+
+            cfgPath = ofd.FileName;
+            _txtConfigPath.Text = cfgPath; // handig: meteen onthouden in de UI
+        }
+
+        var tool = new NotificationPullerAgentPublisherTool();
+
+        var p = ToolParameters.Empty
+            .With(NotificationPullerAgentPublisherParameterKeys.OutputFolder, outDir ?? "")
+            .With(NotificationPullerAgentPublisherParameterKeys.ConfigPath, cfgPath)
+            .With(NotificationPullerAgentPublisherParameterKeys.CopyConfig, "true")
+            .With(NotificationPullerAgentPublisherParameterKeys.Configuration, "Release")
+            .With(NotificationPullerAgentPublisherParameterKeys.Runtime, "win-x64")
+            .With(NotificationPullerAgentPublisherParameterKeys.SelfContained, "true")
+            .With(NotificationPullerAgentPublisherParameterKeys.SingleFile, "true");
+
+        _ = RunToolAsync(
+            tool: tool,
+            parameters: p,
+            toolLogTag: "agent",
+            onCompleted: result =>
+            {
+                // lichte UX: wél een info popup bij succes (dit is een “actie” met output)
+                if (result.Success)
+                {
+                    var dir = result.TryGetOutput(NotificationPullerAgentPublisherTool.OutputKeyPublishDir) ?? outDir;
+                    var copied = result.TryGetOutput(NotificationPullerAgentPublisherTool.OutputKeyCopiedConfigPath);
+
+                    var msg = $"Agent gebouwd naar:\n{dir}";
+                    if (!string.IsNullOrWhiteSpace(copied))
+                        msg += $"\n\nConfig gekopieerd:\n{copied}";
+
+                    MessageBox.Show(this, msg, "Agent build klaar", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+
+                return Task.CompletedTask;
+            },
+            showWarningsOnSuccess: true,
+            successMessageFactory: _ => "");
+    }
+
 }

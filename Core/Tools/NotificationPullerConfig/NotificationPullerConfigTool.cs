@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using StruxureGuard.Core.Logging;
 using StruxureGuard.Core.Tools.Infrastructure;
 
+
 namespace StruxureGuard.Core.Tools.NotificationPullerConfig;
 
 public sealed class NotificationPullerConfigTool : ITool
