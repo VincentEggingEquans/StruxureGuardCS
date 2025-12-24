@@ -15,5 +15,4 @@ public sealed record AspPathCheckerResultDto(
     int AspWithoutMatchCount,
     int PathsWithoutAspCount,
     int CheckedCount,
-    int MissingCount,
-    string OutputFile);
+    int MissingCount);

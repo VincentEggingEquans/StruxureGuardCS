@@ -185,4 +185,26 @@ public abstract class ToolBaseForm : Form
         return Task.CompletedTask;
 
     }
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+        if (keyData == Keys.Escape)
+        {
+            var tag = _activeToolLogTag ?? ToolLogTags.Ui;
+
+            if (IsRunning)
+            {
+                Log.Info(tag, $"ui: ESC -> cancel form='{GetType().Name}'");
+                CancelRun();
+            }
+            else
+            {
+                Log.Info(tag, $"ui: ESC -> close form='{GetType().Name}'");
+                Close();
+            }
+
+            return true;
+        }
+
+        return base.ProcessCmdKey(ref msg, keyData);
+    }
 }

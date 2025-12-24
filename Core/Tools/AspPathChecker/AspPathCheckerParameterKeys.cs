@@ -13,9 +13,4 @@ public static class AspPathCheckerParameterKeys
 
     // Comma-separated 0-based indices (only used if CheckAll=false)
     public const string SelectedIndices = "SelectedIndices";
-
-    // Full output file path (optional; UI provides default)
-    public const string OutputFile = "OutputFile";
-    // Root folder for disk existence checks (optional)
-    public const string RootFolder = "RootFolder";
 }
