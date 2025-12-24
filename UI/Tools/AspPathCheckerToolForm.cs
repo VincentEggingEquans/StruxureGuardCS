@@ -12,19 +12,16 @@ namespace StruxureGuard.UI.Tools;
 
 public sealed class AspPathCheckerToolForm : ToolBaseForm
 {
-    // INPUT grids (ModbusGroupAdvisor-style)
     private readonly DataGridView _gridAsp;
     private readonly DataGridView _gridPaths;
+
+    private readonly ListView _lv;
 
     private readonly Button _btnBuild;
     private readonly Button _btnCheckSelected;
     private readonly Button _btnCheckAll;
-
-    // OUTPUT list (right)
-    private readonly ListView _lv;
     private readonly Label _lblStatus;
 
-    // Column indices in output list
     private const int ColAsp = 0;
     private const int ColPath = 1;
     private const int ColStatus = 2;
@@ -32,59 +29,67 @@ public sealed class AspPathCheckerToolForm : ToolBaseForm
     public AspPathCheckerToolForm()
     {
         Text = "ASP Path Checker";
-        MinimumSize = new Size(1470, 650);
+        MinimumSize = new Size(1200, 720);
 
         Log.Info("asppath", "ui: form constructed");
 
-        var outer = new TableLayoutPanel
+        // ---------- MIDDLE (results fill) ----------
+        var mid = new Panel
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 2
+            Padding = new Padding(10, 6, 10, 6)
         };
-        outer.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); // main area
-        outer.RowStyles.Add(new RowStyle(SizeType.AutoSize));     // bottom buttons/status
-        Controls.Add(outer);
+        Controls.Add(mid);
 
-        var root = new SplitContainer
+        // ---------- TOP (inputs) ----------
+        var top = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = 280,
+            Padding = new Padding(10, 10, 10, 6)
+        };
+        Controls.Add(top);
+
+        // ---------- BOTTOM (buttons + status) ----------
+        var bottom = new Panel
+        {
+            Dock = DockStyle.Bottom,
+            Height = 54,
+            Padding = new Padding(10, 6, 10, 10)
+        };
+        Controls.Add(bottom);
+
+
+        // Inputs layout (2 columns)
+        var inputs = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            Orientation = Orientation.Vertical,
-            SplitterWidth = 6,
-            FixedPanel = FixedPanel.Panel1,
-            IsSplitterFixed = false
+            ColumnCount = 2,
+            RowCount = 3
         };
-        outer.Controls.Add(root, 0, 0);
+        inputs.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        inputs.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        inputs.RowStyles.Add(new RowStyle(SizeType.AutoSize));     // header line
+        inputs.RowStyles.Add(new RowStyle(SizeType.AutoSize));     // labels
+        inputs.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); // grids
+        top.Controls.Add(inputs);
 
-        // Belangrijk: pas splitter pas na layout/Shown toe (anders pakt hij soms niet)
-        Shown += (_, _) =>
+        // Compact header hint
+        var hint = new Label
         {
-            root.SplitterDistance = 700; // LINKS 700px -> RECHTS smaller. Wil je rechts breder? lager maken.
-            BeginInvoke(new Action(AutoFitOutputColumns));
+            AutoSize = true,
+            Text = "Ctrl+V plakt TSV en bouwt kolommen op basis van de eerste regel (header). Output: Ctrl+C kopieert geselecteerde regels.",
+            Padding = new Padding(0, 0, 0, 6)
         };
+        inputs.Controls.Add(hint, 0, 0);
+        inputs.SetColumnSpan(hint, 2);
 
-        // Als je de splitter sleept: kolommen opnieuw fitten
-        root.SplitterMoved += (_, _) => AutoFitOutputColumns();
-
-
-        // ---------------- LEFT (inputs) ----------------
-        var left = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 5,
-            Padding = new Padding(10)
-        };
-        left.RowStyles.Add(new RowStyle(SizeType.AutoSize));        // ASP label
-        left.RowStyles.Add(new RowStyle(SizeType.Percent, 50));     // ASP grid
-        left.RowStyles.Add(new RowStyle(SizeType.AutoSize));        // Paths label
-        left.RowStyles.Add(new RowStyle(SizeType.Percent, 50));     // Paths grid
-        left.RowStyles.Add(new RowStyle(SizeType.AutoSize));        // buttons
-        root.Panel1.Controls.Add(left);
-
-        left.Controls.Add(new Label { Text = "ASP input (plak TSV export: kolom 'Name'):", AutoSize = true }, 0, 0);
+        inputs.Controls.Add(new Label { Text = "ASP input (plak TSV export: kolom 'Name'):", AutoSize = true }, 0, 1);
+        inputs.Controls.Add(new Label { Text = "Path input (plak TSV export: kolom 'Path'):", AutoSize = true }, 1, 1);
 
         _gridAsp = CreateInputGrid();
+        _gridPaths = CreateInputGrid();
+
         _gridAsp.KeyDown += (_, e) =>
         {
             if (e.Control && e.KeyCode == Keys.V)
@@ -93,11 +98,7 @@ public sealed class AspPathCheckerToolForm : ToolBaseForm
                 PasteReplaceGridFromClipboard(_gridAsp, gridTag: "asp", preferredHeaderKey: "Name");
             }
         };
-        left.Controls.Add(_gridAsp, 0, 1);
 
-        left.Controls.Add(new Label { Text = "Path input (plak TSV export: kolom 'Path'):", AutoSize = true }, 0, 2);
-
-        _gridPaths = CreateInputGrid();
         _gridPaths.KeyDown += (_, e) =>
         {
             if (e.Control && e.KeyCode == Keys.V)
@@ -106,60 +107,11 @@ public sealed class AspPathCheckerToolForm : ToolBaseForm
                 PasteReplaceGridFromClipboard(_gridPaths, gridTag: "path", preferredHeaderKey: "Path");
             }
         };
-        left.Controls.Add(_gridPaths, 0, 3);
 
-        var btnRow = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Top,
-            FlowDirection = FlowDirection.LeftToRight,
-            AutoSize = true,
-            WrapContents = false
-        };
+        inputs.Controls.Add(_gridAsp, 0, 2);
+        inputs.Controls.Add(_gridPaths, 1, 2);
 
-        _btnBuild = new Button { Text = "Build list" };
-        _btnBuild.Click += (_, _) => RunBuild();
-
-        _btnCheckSelected = new Button { Text = "Check selected" };
-        _btnCheckSelected.Click += (_, _) => RunCheckSelected();
-
-        _btnCheckAll = new Button { Text = "Check all" };
-        _btnCheckAll.Click += (_, _) => RunCheckAll();
-
-        btnRow.Controls.Add(_btnBuild);
-        btnRow.Controls.Add(_btnCheckSelected);
-        btnRow.Controls.Add(_btnCheckAll);
-
-        var bottom = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 2,
-            RowCount = 1,
-            Padding = new Padding(10, 0, 10, 10)
-        };
-        bottom.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        bottom.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        outer.Controls.Add(bottom, 0, 1);
-
-        bottom.Controls.Add(btnRow, 0, 0);
-
-        // Status rechts onderin (zelfde rij als knoppen)
-        _lblStatus.TextAlign = ContentAlignment.MiddleRight;
-        _lblStatus.Dock = DockStyle.Fill;
-        bottom.Controls.Add(_lblStatus, 1, 0);
-
-
-        // ---------------- RIGHT (output) ----------------
-        var right = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 2,
-            Padding = new Padding(10)
-        };
-        right.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        right.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.Panel2.Controls.Add(right);
-
+        // Results list
         _lv = new ListView
         {
             Dock = DockStyle.Fill,
@@ -168,18 +120,56 @@ public sealed class AspPathCheckerToolForm : ToolBaseForm
             HideSelection = false,
             BorderStyle = BorderStyle.FixedSingle
         };
+        _lv.Columns.Add("ASP", 200, HorizontalAlignment.Left);
+        _lv.Columns.Add("Path", 200, HorizontalAlignment.Left);
+        _lv.Columns.Add("Status", 200, HorizontalAlignment.Left);
 
-        _lv.Columns.Add("ASP", 260, HorizontalAlignment.Left);
-        _lv.Columns.Add("Path", 200, HorizontalAlignment.Left); // wordt toch direct autofit
-        _lv.Columns.Add("Status", 260, HorizontalAlignment.Left);
+        _lv.KeyDown += (_, e) =>
+        {
+            if (e.Control && e.KeyCode == Keys.C)
+            {
+                e.SuppressKeyPress = true;
+                CopySelectedRowsAsTsv();
+            }
+        };
 
         _lv.Resize += (_, _) => AutoFitOutputColumns();
-        right.Controls.Add(_lv, 0, 0);
+        mid.Controls.Add(_lv);
 
-        _lblStatus = new Label { AutoSize = true, Text = "" };
-        right.Controls.Add(_lblStatus, 0, 1);
+        // Bottom content: buttons left, status right
+        var btnRow = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Left,
+            AutoSize = true,
+            WrapContents = false,
+            FlowDirection = FlowDirection.LeftToRight
+        };
+        bottom.Controls.Add(btnRow);
 
-        AutoFitOutputColumns();
+        _lblStatus = new Label
+        {
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleRight,
+            AutoSize = false,
+            Text = ""
+        };
+        bottom.Controls.Add(_lblStatus);
+
+        _btnBuild = new Button { Text = "Build list", Width = 90 };
+        _btnBuild.Click += (_, _) => RunBuild();
+
+        _btnCheckSelected = new Button { Text = "Check", Width = 90 };
+        _btnCheckSelected.Click += (_, _) => RunCheckSelected();
+
+        _btnCheckAll = new Button { Text = "Check all", Width = 90 };
+        _btnCheckAll.Click += (_, _) => RunCheckAll();
+
+        btnRow.Controls.Add(_btnBuild);
+        btnRow.Controls.Add(_btnCheckSelected);
+        btnRow.Controls.Add(_btnCheckAll);
+
+        // Initial fit (prevents horizontal bar at startup)
+        Shown += (_, _) => BeginInvoke(new Action(AutoFitOutputColumns));
     }
 
     protected override void UpdateUiRunningState(bool isRunning)
@@ -190,7 +180,6 @@ public sealed class AspPathCheckerToolForm : ToolBaseForm
 
         _gridAsp.Enabled = !isRunning;
         _gridPaths.Enabled = !isRunning;
-
         _lv.Enabled = !isRunning;
 
         if (isRunning)
@@ -204,7 +193,6 @@ public sealed class AspPathCheckerToolForm : ToolBaseForm
         Log.Info("asppath", "ui: CLICK Build list");
 
         var tool = new AspPathCheckerTool();
-
         var aspRaw = BuildRawFromGrid(_gridAsp);
         var pathRaw = BuildRawFromGrid(_gridPaths);
 
@@ -228,10 +216,7 @@ public sealed class AspPathCheckerToolForm : ToolBaseForm
 
     private void RunCheckSelected()
     {
-        var sel = _lv.SelectedIndices.Cast<int>()
-            .Distinct()
-            .OrderBy(i => i)
-            .ToList();
+        var sel = _lv.SelectedIndices.Cast<int>().Distinct().OrderBy(i => i).ToList();
 
         Log.Info("asppath", $"ui: CLICK Check selected selectedCount={sel.Count}");
 
@@ -243,7 +228,6 @@ public sealed class AspPathCheckerToolForm : ToolBaseForm
         }
 
         var tool = new AspPathCheckerTool();
-
         var aspRaw = BuildRawFromGrid(_gridAsp);
         var pathRaw = BuildRawFromGrid(_gridPaths);
 
@@ -272,7 +256,6 @@ public sealed class AspPathCheckerToolForm : ToolBaseForm
         Log.Info("asppath", "ui: CLICK Check all");
 
         var tool = new AspPathCheckerTool();
-
         var aspRaw = BuildRawFromGrid(_gridAsp);
         var pathRaw = BuildRawFromGrid(_gridPaths);
 
@@ -378,47 +361,32 @@ public sealed class AspPathCheckerToolForm : ToolBaseForm
             var total = _lv.ClientSize.Width;
             if (total <= 0) return;
 
-            // ruimte voor borders + verticale scrollbar
             const int pad = 50;
-
-            // Doel “mooie” widths, maar nooit overflow
             var available = Math.Max(0, total - pad);
 
-            // Basis max widths (zoals je mooi vindt)
-            int aspMax = 260;
-            int statusMax = 260;
-
-            // Minimums (zodat het leesbaar blijft)
             const int aspMin = 140;
             const int statusMin = 160;
-            const int pathMin = 150;
+            const int pathMin = 240;
 
-            // Als het krap wordt: laat ASP/Status mee krimpen
-            int aspW = Math.Min(aspMax, available / 4);
-            int statusW = Math.Min(statusMax, available / 4);
+            int aspW = Math.Max(aspMin, Math.Min(260, available / 4));
+            int statusW = Math.Max(statusMin, Math.Min(260, available / 4));
 
-            aspW = Math.Max(aspMin, aspW);
-            statusW = Math.Max(statusMin, statusW);
-
-            // Path krijgt rest, maar minimaal pathMin
             int pathW = available - aspW - statusW;
             if (pathW < pathMin)
             {
-                // Nog krapper: knijp ASP/Status extra zodat Path minimaal past
-                int shortage = pathMin - pathW;
+                var shortage = pathMin - pathW;
+                var takeAsp = shortage / 2;
+                var takeStatus = shortage - takeAsp;
 
-                int takeFromAsp = shortage / 2;
-                int takeFromStatus = shortage - takeFromAsp;
-
-                aspW = Math.Max(aspMin, aspW - takeFromAsp);
-                statusW = Math.Max(statusMin, statusW - takeFromStatus);
+                aspW = Math.Max(aspMin, aspW - takeAsp);
+                statusW = Math.Max(statusMin, statusW - takeStatus);
 
                 pathW = Math.Max(pathMin, available - aspW - statusW);
             }
 
             _lv.Columns[ColAsp].Width = aspW;
-            _lv.Columns[ColStatus].Width = statusW;
             _lv.Columns[ColPath].Width = Math.Max(pathMin, pathW);
+            _lv.Columns[ColStatus].Width = statusW;
         }
         catch (Exception ex)
         {
@@ -426,8 +394,31 @@ public sealed class AspPathCheckerToolForm : ToolBaseForm
         }
     }
 
+    private void CopySelectedRowsAsTsv()
+    {
+        try
+        {
+            if (_lv.SelectedItems.Count == 0) return;
 
-    // ---------------- Input grid helpers (ModbusGroupAdvisor pattern) ----------------
+            var sb = new StringBuilder();
+            foreach (ListViewItem it in _lv.SelectedItems)
+            {
+                var asp = it.SubItems.Count > 0 ? it.SubItems[0].Text : "";
+                var path = it.SubItems.Count > 1 ? it.SubItems[1].Text : "";
+                var status = it.SubItems.Count > 2 ? it.SubItems[2].Text : "";
+                sb.Append(asp).Append('\t').Append(path).Append('\t').Append(status).AppendLine();
+            }
+
+            Clipboard.SetText(sb.ToString());
+            Log.Info("asppath", $"ui: Copy TSV selectedCount={_lv.SelectedItems.Count}");
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("asppath", $"ui: Copy failed (non-fatal): {ex.GetType().Name}: {ex.Message}\n{ex}");
+        }
+    }
+
+    // ---------------- Input grid helpers ----------------
 
     private static DataGridView CreateInputGrid()
     {
@@ -459,14 +450,13 @@ public sealed class AspPathCheckerToolForm : ToolBaseForm
             var txt = Clipboard.GetText();
             if (string.IsNullOrWhiteSpace(txt))
             {
-                Log.Info("asppath", $"PasteReplaceGrid[{gridTag}]: clipboard empty");
+                Log.Info("asppath", $"ui: paste-replace grid[{gridTag}] clipboard empty");
                 return;
             }
 
             txt = txt.Replace("\r\n", "\n").Replace("\r", "\n");
             var lines = txt.Split('\n');
 
-            // remove trailing empty lines
             while (lines.Length > 0 && string.IsNullOrWhiteSpace(lines[^1]))
                 lines = lines.Take(lines.Length - 1).ToArray();
 
@@ -477,10 +467,6 @@ public sealed class AspPathCheckerToolForm : ToolBaseForm
             var maxCols = rows.Max(r => r.Length);
             if (maxCols <= 0) return;
 
-            // Determine header strategy:
-            // - If it looks like TSV (tabs present) -> first row = header
-            // - Or if first row contains preferredHeaderKey -> header
-            // - Else fallback: still treat first row as header if multi-col
             var first = rows[0];
             bool tsvDetected = txt.Contains('\t');
             bool headerContainsKey = first.Any(c => string.Equals((c ?? "").Trim(), preferredHeaderKey, StringComparison.OrdinalIgnoreCase));
@@ -496,7 +482,6 @@ public sealed class AspPathCheckerToolForm : ToolBaseForm
             }
             else
             {
-                // single-column list with no clear header -> create header ourselves and include all lines
                 header = new[] { preferredHeaderKey };
                 startRow = 0;
             }
@@ -518,11 +503,11 @@ public sealed class AspPathCheckerToolForm : ToolBaseForm
             AutoSizeGridColumns(grid, sampleRows: Math.Min(80, grid.Rows.Count));
 
             Log.Info("asppath",
-                $"PasteReplaceGrid[{gridTag}] ok tsv={tsvDetected} headerUsed={treatFirstAsHeader} rows={grid.Rows.Count} cols={grid.Columns.Count} rawLen={txt.Length}");
+                $"ui: paste-replace grid[{gridTag}] ok tsv={tsvDetected} headerUsed={treatFirstAsHeader} rows={grid.Rows.Count} cols={grid.Columns.Count} rawLen={txt.Length}");
         }
         catch (Exception ex)
         {
-            Log.Warn("asppath", $"PasteReplaceGrid[{gridTag}] failed: {ex.GetType().Name}: {ex.Message}\n{ex}");
+            Log.Warn("asppath", $"ui: paste-replace grid[{gridTag}] failed: {ex.GetType().Name}: {ex.Message}\n{ex}");
             MessageBox.Show(this, "Plakken naar grid mislukt. Zie log (Alt+L).", "Clipboard",
                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
@@ -568,18 +553,18 @@ public sealed class AspPathCheckerToolForm : ToolBaseForm
                     if (v.Length > 120) v = v.Substring(0, 120);
                     var vw = TextRenderer.MeasureText(v, grid.Font).Width + 26;
                     if (vw > w) w = vw;
-                    if (w > 520) { w = 520; break; }
+                    if (w > 420) { w = 420; break; }
                 }
 
                 if (w < 90) w = 90;
-                if (w > 520) w = 520;
+                if (w > 420) w = 420;
 
                 col.Width = w;
             }
         }
         catch (Exception ex)
         {
-            Log.Warn("asppath", $"AutoSizeGridColumns failed (non-fatal): {ex.GetType().Name}: {ex.Message}");
+            Log.Warn("asppath", $"ui: AutoSizeGridColumns failed (non-fatal): {ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -590,11 +575,9 @@ public sealed class AspPathCheckerToolForm : ToolBaseForm
 
         var sb = new StringBuilder();
 
-        // header
         sb.Append(string.Join("\t", grid.Columns.Cast<DataGridViewColumn>().Select(c => c.HeaderText)));
         sb.AppendLine();
 
-        // rows
         foreach (DataGridViewRow row in grid.Rows)
         {
             if (row.IsNewRow) continue;
@@ -603,7 +586,6 @@ public sealed class AspPathCheckerToolForm : ToolBaseForm
             for (int i = 0; i < cells.Length; i++)
                 cells[i] = row.Cells[i].Value?.ToString() ?? "";
 
-            // trim trailing empty columns (nicer output)
             int end = cells.Length;
             while (end > 1 && string.IsNullOrWhiteSpace(cells[end - 1]))
                 end--;
