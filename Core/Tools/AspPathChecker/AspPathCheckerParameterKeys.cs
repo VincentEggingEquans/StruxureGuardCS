@@ -16,4 +16,6 @@ public static class AspPathCheckerParameterKeys
 
     // Full output file path (optional; UI provides default)
     public const string OutputFile = "OutputFile";
+    // Root folder for disk existence checks (optional)
+    public const string RootFolder = "RootFolder";
 }

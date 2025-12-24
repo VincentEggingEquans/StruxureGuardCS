@@ -1,5 +1,5 @@
 using System;
-using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
@@ -9,196 +9,160 @@ using StruxureGuard.Core.Logging;
 using StruxureGuard.Core.Tools.AspPathChecker;
 using StruxureGuard.Core.Tools.Infrastructure;
 
-
 namespace StruxureGuard.UI.Tools;
 
 public sealed class AspPathCheckerToolForm : ToolBaseForm
 {
     private readonly TextBox _txtAsp;
     private readonly TextBox _txtPaths;
+    private readonly TextBox _txtOutputFile;
 
     private readonly Button _btnBuild;
     private readonly Button _btnCheckSelected;
     private readonly Button _btnCheckAll;
-    private readonly Button _btnClear;
+    private readonly Button _btnOpenOutput;
 
     private readonly DataGridView _grid;
-
-    private readonly Label _lblInfo;
-    private readonly Label _lblOutput;
-
-    private readonly Button _btnOpenLog;
-    private readonly Button _btnOpenFolder;
-
-    private readonly string _outputFile;
+    private readonly Label _lblStatus;
 
     public AspPathCheckerToolForm()
     {
         Text = "ASP Path Checker";
-        StartPosition = FormStartPosition.CenterParent;
-        WindowState = FormWindowState.Maximized;
+        MinimumSize = new Size(1100, 650);
 
-        _outputFile = GetDefaultOutputFile();
+        Log.Info("asppath", "ASPPathChecker form constructed");
 
-        _txtAsp = MakeMultilineBox();
-        _txtPaths = MakeMultilineBox();
-
-        _btnBuild = MakeButton("Lijst opbouwen", 140, async (_, __) => await BuildListAsync());
-        _btnCheckSelected = MakeButton("Check geselecteerde", 160, async (_, __) => await CheckSelectedAsync());
-        _btnCheckAll = MakeButton("Check alles", 120, async (_, __) => await CheckAllAsync());
-        _btnClear = MakeButton("Lijst leegmaken", 130, (_, __) => ClearList());
-        _btnOpenLog = MakeButton("Open log", 95, (_, __) => OpenLogFile());
-        _btnOpenFolder = MakeButton("Open folder", 110, (_, __) => OpenLogFolder());
-
-        _grid = new DataGridView
+        var root = new SplitContainer
         {
             Dock = DockStyle.Fill,
-            BorderStyle = BorderStyle.FixedSingle,
-            BackgroundColor = SystemColors.Window,
-            AllowUserToAddRows = false,
-            AllowUserToDeleteRows = false,
-            AllowUserToResizeRows = false,
-            RowHeadersVisible = false,
-            MultiSelect = true,
-            SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-            ReadOnly = true,
-            AutoGenerateColumns = false,
-            Font = new Font("Segoe UI", 9f)
+            Orientation = Orientation.Vertical,
+            SplitterWidth = 6,
+            SplitterDistance = 420
         };
+        Controls.Add(root);
 
-        _grid.Columns.Add(new DataGridViewTextBoxColumn
+        // LEFT: inputs
+        var left = new TableLayoutPanel
         {
-            HeaderText = "ASP-naam",
-            DataPropertyName = nameof(AspPathRowDto.AspName),
-            Width = 240,
-            SortMode = DataGridViewColumnSortMode.NotSortable
-        });
-        _grid.Columns.Add(new DataGridViewTextBoxColumn
-        {
-            HeaderText = "Path",
-            DataPropertyName = nameof(AspPathRowDto.Path),
-            Width = 760,
-            SortMode = DataGridViewColumnSortMode.NotSortable
-        });
-        _grid.Columns.Add(new DataGridViewTextBoxColumn
-        {
-            HeaderText = "Status",
-            DataPropertyName = nameof(AspPathRowDto.Status),
-            Width = 220,
-            SortMode = DataGridViewColumnSortMode.NotSortable
-        });
-
-        _grid.RowPrePaint += (_, e) =>
-        {
-            try
-            {
-                var row = _grid.Rows[e.RowIndex];
-                var status = row.Cells[2].Value?.ToString() ?? "";
-
-                // Rood: ontbreekt / gelogd
-                if (status.Contains("Ontbreekt", StringComparison.OrdinalIgnoreCase))
-                {
-                    row.DefaultCellStyle.ForeColor = Color.Firebrick;
-                    row.DefaultCellStyle.BackColor = SystemColors.Window;
-                    return;
-                }
-
-                // Oranje/grijs: geen match
-                if (status.Contains("Geen path gevonden", StringComparison.OrdinalIgnoreCase) ||
-                    status.Contains("Geen ASP gevonden", StringComparison.OrdinalIgnoreCase))
-                {
-                    row.DefaultCellStyle.ForeColor = Color.DarkGoldenrod;
-                    row.DefaultCellStyle.BackColor = SystemColors.Window;
-                    return;
-                }
-
-                // Normaal
-                row.DefaultCellStyle.ForeColor = SystemColors.ControlText;
-                row.DefaultCellStyle.BackColor = SystemColors.Window;
-            }
-            catch
-            {
-                // non-fatal
-            }
-        };
-
-
-        _lblInfo = new Label
-        {
-            AutoSize = true,
             Dock = DockStyle.Fill,
-            Text = "",
-            ForeColor = SystemColors.GrayText
+            ColumnCount = 1,
+            RowCount = 8,
+            Padding = new Padding(10)
         };
+        left.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // ASP label
+        left.RowStyles.Add(new RowStyle(SizeType.Percent, 45)); // ASP box
+        left.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // PATH label
+        left.RowStyles.Add(new RowStyle(SizeType.Percent, 45)); // PATH box
+        left.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // output label
+        left.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // output box
+        left.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // buttons
+        left.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // status
+        root.Panel1.Controls.Add(left);
 
-        _lblOutput = new Label
+        left.Controls.Add(new Label { Text = "ASP input (TSV: kolom 'Name' of losse regels):", AutoSize = true }, 0, 0);
+
+        _txtAsp = new TextBox
         {
-            AutoSize = true,
-            Dock = DockStyle.Fill,
-            Text = $"Ontbrekende paden worden gelogd in: {_outputFile}",
-            ForeColor = SystemColors.GrayText
+            Multiline = true,
+            ScrollBars = ScrollBars.Both,
+            WordWrap = false,
+            Dock = DockStyle.Fill
         };
+        _txtAsp.KeyDown += OnPasteReplaceKeyDown;
+        left.Controls.Add(_txtAsp, 0, 1);
 
-        // Layout
-        var top = new TableLayoutPanel
+        left.Controls.Add(new Label { Text = "Paths input (TSV: kolom 'Path' of losse regels):", AutoSize = true }, 0, 2);
+
+        _txtPaths = new TextBox
+        {
+            Multiline = true,
+            ScrollBars = ScrollBars.Both,
+            WordWrap = false,
+            Dock = DockStyle.Fill
+        };
+        _txtPaths.KeyDown += OnPasteReplaceKeyDown;
+        left.Controls.Add(_txtPaths, 0, 3);
+
+        left.Controls.Add(new Label { Text = "Output file (missings):", AutoSize = true }, 0, 4);
+
+        _txtOutputFile = new TextBox
         {
             Dock = DockStyle.Top,
-            ColumnCount = 2,
-            RowCount = 3,
-            Height = 260,
-            Padding = new Padding(6)
+            Width = 380
         };
-        top.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 40));
-        top.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 60));
-        top.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        top.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        top.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-
-        var lblAsp = new Label { Text = "ASP-namen (één per regel):", AutoSize = true, Font = new Font(SystemFonts.DefaultFont, FontStyle.Bold) };
-        var lblPaths = new Label { Text = "Paden (één per regel):", AutoSize = true, Font = new Font(SystemFonts.DefaultFont, FontStyle.Bold) };
-
-        top.Controls.Add(lblAsp, 0, 0);
-        top.Controls.Add(lblPaths, 1, 0);
-        top.Controls.Add(_txtAsp, 0, 1);
-        top.Controls.Add(_txtPaths, 1, 1);
+        _txtOutputFile.Text = Path.Combine(Log.LogFolder, "missing_asp_paths.txt");
+        left.Controls.Add(_txtOutputFile, 0, 5);
 
         var btnRow = new FlowLayoutPanel
         {
-            Dock = DockStyle.Fill,
+            Dock = DockStyle.Top,
             FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false,
-            AutoSize = true
-        };
-        btnRow.Controls.Add(_btnBuild);
-        btnRow.Controls.Add(_btnCheckSelected);
-        btnRow.Controls.Add(_btnCheckAll);
-        btnRow.Controls.Add(_btnClear);
-        btnRow.Controls.Add(_btnOpenLog);
-        btnRow.Controls.Add(_btnOpenFolder);
-
-        top.Controls.Add(btnRow, 0, 2);
-        top.SetColumnSpan(btnRow, 2);
-
-        var gridCard = BuildCard("ASP / Path lijst (na koppelen)", _grid);
-
-        var bottom = new TableLayoutPanel
-        {
-            Dock = DockStyle.Bottom,
-            ColumnCount = 1,
-            RowCount = 2,
             AutoSize = true,
-            Padding = new Padding(6)
+            WrapContents = false
         };
-        bottom.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        bottom.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        bottom.Controls.Add(_lblInfo, 0, 0);
-        bottom.Controls.Add(_lblOutput, 0, 1);
+        left.Controls.Add(btnRow, 0, 6);
 
-        Controls.Add(gridCard);
-        Controls.Add(top);
-        Controls.Add(bottom);
+        _btnBuild = new Button { Text = "Build list", AutoSize = true };
+        _btnBuild.Click += (_, __) => RunBuild();
+        btnRow.Controls.Add(_btnBuild);
 
-        Log.Info("asppath", "ASPPathChecker form constructed");
+        _btnCheckSelected = new Button { Text = "Check selected", AutoSize = true };
+        _btnCheckSelected.Click += (_, __) => RunCheckSelected();
+        btnRow.Controls.Add(_btnCheckSelected);
+
+        _btnCheckAll = new Button { Text = "Check all", AutoSize = true };
+        _btnCheckAll.Click += (_, __) => RunCheckAll();
+        btnRow.Controls.Add(_btnCheckAll);
+
+        _btnOpenOutput = new Button { Text = "Open output file", AutoSize = true };
+        _btnOpenOutput.Click += (_, __) => OpenOutputFile();
+        btnRow.Controls.Add(_btnOpenOutput);
+
+        _lblStatus = new Label
+        {
+            Text = "Ready.",
+            AutoSize = true,
+            Dock = DockStyle.Top
+        };
+        left.Controls.Add(_lblStatus, 0, 7);
+
+        // RIGHT: grid
+        _grid = new DataGridView
+        {
+            Dock = DockStyle.Fill,
+            AllowUserToAddRows = false,
+            AllowUserToDeleteRows = false,
+            ReadOnly = true,
+            SelectionMode = DataGridViewSelectionMode.FullRowSelect,
+            MultiSelect = true,
+            AutoGenerateColumns = false
+        };
+
+        _grid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "AspName",
+            HeaderText = "ASP",
+            DataPropertyName = "AspName",
+            Width = 220
+        });
+        _grid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Path",
+            HeaderText = "Path",
+            DataPropertyName = "Path",
+            AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill
+        });
+        _grid.Columns.Add(new DataGridViewTextBoxColumn
+        {
+            Name = "Status",
+            HeaderText = "Status",
+            DataPropertyName = "Status",
+            Width = 180
+        });
+
+        root.Panel2.Controls.Add(_grid);
+
+        UpdateUiRunningState(false);
     }
 
     protected override void UpdateUiRunningState(bool isRunning)
@@ -206,263 +170,222 @@ public sealed class AspPathCheckerToolForm : ToolBaseForm
         _btnBuild.Enabled = !isRunning;
         _btnCheckSelected.Enabled = !isRunning;
         _btnCheckAll.Enabled = !isRunning;
-        _btnClear.Enabled = !isRunning;
-        _btnOpenLog.Enabled = !isRunning;
-        _btnOpenFolder.Enabled = !isRunning;
+        _btnOpenOutput.Enabled = !isRunning;
 
-        _txtAsp.Enabled = !isRunning;
-        _txtPaths.Enabled = !isRunning;
-        _grid.Enabled = !isRunning;
+        _txtAsp.ReadOnly = isRunning;
+        _txtPaths.ReadOnly = isRunning;
+        _txtOutputFile.ReadOnly = isRunning;
     }
 
-    private async System.Threading.Tasks.Task BuildListAsync()
+    protected override void OnProgress(ToolProgressInfo p)
+    {
+        _lblStatus.Text = $"{p.Phase} - {p.Percent}% - {p.Message}";
+    }
+
+    private void RunBuild()
     {
         Log.Info("asppath", "CLICK Build list");
 
         var tool = new AspPathCheckerTool();
-        var p = ToolParameters.Empty
-            .With(AspPathCheckerParameterKeys.Mode, "build")
-            .With(AspPathCheckerParameterKeys.AspText, _txtAsp.Text ?? "")
-            .With(AspPathCheckerParameterKeys.PathText, _txtPaths.Text ?? "")
-            .With(AspPathCheckerParameterKeys.OutputFile, _outputFile);
 
-        await RunToolAsync(
-            tool: tool,
-            parameters: p,
+        var parameters = new ToolParameters()
+            .With(AspPathCheckerParameterKeys.Mode, "build")
+            .With(AspPathCheckerParameterKeys.AspText, _txtAsp.Text)
+            .With(AspPathCheckerParameterKeys.PathText, _txtPaths.Text)
+            .With(AspPathCheckerParameterKeys.OutputFile, _txtOutputFile.Text);
+
+        _ = RunToolAsync(
+            tool,
+            parameters,
             toolLogTag: "asppath",
-            onCompleted: r =>
+            onCompleted: result =>
             {
-                PopulateFromResult(r);
+                ApplyResultToGrid(result);
                 return System.Threading.Tasks.Task.CompletedTask;
             },
-            showWarningsOnSuccess: false,
-            successMessageFactory: _ => "");
+            successMessage: "");
     }
 
-    private async System.Threading.Tasks.Task CheckSelectedAsync()
+    private void RunCheckSelected()
     {
-        Log.Info("asppath", "CLICK Check selected");
-
-        var selected = _grid.SelectedRows.Cast<DataGridViewRow>()
+        var sel = _grid.SelectedRows.Cast<DataGridViewRow>()
             .Select(r => r.Index)
             .Distinct()
             .OrderBy(i => i)
             .ToList();
 
-        if (selected.Count == 0)
+        Log.Info("asppath", $"CLICK Check selected selectedCount={sel.Count}");
+
+        if (sel.Count == 0)
         {
-            _lblInfo.Text = "Geen selectie.";
-            Log.Info("asppath", "CheckSelected: no selection");
+            MessageBox.Show(this, "Selecteer eerst één of meerdere regels in de lijst.", "Check selected",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
 
-        await CheckAsync(checkAll: false, selectedIndices: selected);
-    }
-
-    private async System.Threading.Tasks.Task CheckAllAsync()
-    {
-        Log.Info("asppath", "CLICK Check all");
-        await CheckAsync(checkAll: true, selectedIndices: new List<int>());
-    }
-
-    private async System.Threading.Tasks.Task CheckAsync(bool checkAll, List<int> selectedIndices)
-    {
         var tool = new AspPathCheckerTool();
 
-        var p = ToolParameters.Empty
+        var parameters = new ToolParameters()
             .With(AspPathCheckerParameterKeys.Mode, "check")
-            .With(AspPathCheckerParameterKeys.CheckAll, checkAll ? "true" : "false")
-            .With(AspPathCheckerParameterKeys.SelectedIndices, string.Join(",", selectedIndices))
-            .With(AspPathCheckerParameterKeys.AspText, _txtAsp.Text ?? "")
-            .With(AspPathCheckerParameterKeys.PathText, _txtPaths.Text ?? "")
-            .With(AspPathCheckerParameterKeys.OutputFile, _outputFile);
+            .With(AspPathCheckerParameterKeys.CheckAll, "false")
+            .With(AspPathCheckerParameterKeys.SelectedIndices, string.Join(",", sel))
+            .With(AspPathCheckerParameterKeys.AspText, _txtAsp.Text)
+            .With(AspPathCheckerParameterKeys.PathText, _txtPaths.Text)
+            .With(AspPathCheckerParameterKeys.OutputFile, _txtOutputFile.Text);
 
-        await RunToolAsync(
-            tool: tool,
-            parameters: p,
+        _ = RunToolAsync(
+            tool,
+            parameters,
             toolLogTag: "asppath",
-            onCompleted: r =>
+            onCompleted: result =>
             {
-                PopulateFromResult(r);
+                ApplyResultToGrid(result);
                 return System.Threading.Tasks.Task.CompletedTask;
             },
-            showWarningsOnSuccess: false,
-            successMessageFactory: _ => "");
+            successMessage: "");
     }
 
-    private void ClearList()
+    private void RunCheckAll()
     {
-        Log.Info("asppath", "CLICK Clear list");
-        _grid.DataSource = null;
-        _lblInfo.Text = "Lijst geleegd.";
+        Log.Info("asppath", "CLICK Check all");
+
+        var tool = new AspPathCheckerTool();
+
+        var parameters = new ToolParameters()
+            .With(AspPathCheckerParameterKeys.Mode, "check")
+            .With(AspPathCheckerParameterKeys.CheckAll, "true")
+            .With(AspPathCheckerParameterKeys.SelectedIndices, "")
+            .With(AspPathCheckerParameterKeys.AspText, _txtAsp.Text)
+            .With(AspPathCheckerParameterKeys.PathText, _txtPaths.Text)
+            .With(AspPathCheckerParameterKeys.OutputFile, _txtOutputFile.Text);
+
+        _ = RunToolAsync(
+            tool,
+            parameters,
+            toolLogTag: "asppath",
+            onCompleted: result =>
+            {
+                ApplyResultToGrid(result);
+                return System.Threading.Tasks.Task.CompletedTask;
+            },
+            successMessage: "");
     }
 
-    private void PopulateFromResult(ToolResult r)
+    private void ApplyResultToGrid(ToolResult result)
     {
-        if (!r.Success) return;
-
-        var json = r.TryGetOutput(AspPathCheckerTool.OutputKeyResultJson);
+        var json = result.TryGetOutput(AspPathCheckerTool.OutputKeyResultJson);
         if (string.IsNullOrWhiteSpace(json))
         {
-            Log.Warn("asppath", "ResultJson missing");
+            Log.Warn("asppath", "No ResultJson output found.");
+            _lblStatus.Text = result.Summary;
             return;
         }
 
-        var dto = JsonSerializer.Deserialize<AspPathCheckerResultDto>(json);
-        if (dto is null)
+        AspPathCheckerResultDto? dto;
+        try
         {
-            Log.Warn("asppath", "ResultJson deserialize failed");
+            dto = JsonSerializer.Deserialize<AspPathCheckerResultDto>(json);
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("asppath", $"Deserialize result failed: {ex.GetType().Name}: {ex.Message}\n{ex}");
+            MessageBox.Show(this, "Kon resultaat niet lezen. Zie log (Alt+L).", "ASP Path Checker",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
-        _grid.DataSource = dto.Rows;
+        if (dto == null)
+            return;
 
-        _lblInfo.Text =
-            $"ASP={dto.AspCount} | Paths={dto.PathCount} | Matches={dto.MatchCount} | " +
-            $"ASP zonder match={dto.AspWithoutMatchCount} | Paths zonder ASP={dto.PathsWithoutAspCount} | " +
-            $"Checked={dto.CheckedCount} | Missing={dto.MissingCount}";
+        _grid.Rows.Clear();
+        foreach (var r in dto.Rows)
+        {
+            var idx = _grid.Rows.Add(r.AspName, r.Path, r.Status);
+            ApplyRowStyle(_grid.Rows[idx], r.Status);
+        }
+
+        _lblStatus.Text = result.Summary;
 
         Log.Info("asppath", $"UI updated rows={dto.Rows.Count} checked={dto.CheckedCount} missing={dto.MissingCount}");
     }
 
-    private static TextBox MakeMultilineBox()
+    private static void ApplyRowStyle(DataGridViewRow row, string status)
     {
-        var tb = new TextBox
-        {
-            Multiline = true,
-            ScrollBars = ScrollBars.Vertical,
-            WordWrap = false,
-            Dock = DockStyle.Fill,
-            Font = new Font("Consolas", 9f)
-        };
+        status ??= "";
 
-        // Paste-replace behavior (Ctrl+V)
-        tb.KeyDown += (_, e) =>
+        // Rood: ontbreekt / gelogd
+        if (status.Contains("Ontbreekt", StringComparison.OrdinalIgnoreCase))
         {
-            if (e.Control && e.KeyCode == Keys.V)
+            row.DefaultCellStyle.ForeColor = Color.Firebrick;
+            row.DefaultCellStyle.BackColor = SystemColors.Window;
+            return;
+        }
+
+        // Oranje: geen match
+        if (status.Contains("Geen path gevonden", StringComparison.OrdinalIgnoreCase) ||
+            status.Contains("Geen ASP gevonden", StringComparison.OrdinalIgnoreCase))
+        {
+            row.DefaultCellStyle.ForeColor = Color.DarkGoldenrod;
+            row.DefaultCellStyle.BackColor = SystemColors.Window;
+            return;
+        }
+
+        // Default
+        row.DefaultCellStyle.ForeColor = SystemColors.ControlText;
+        row.DefaultCellStyle.BackColor = SystemColors.Window;
+    }
+
+    private void OpenOutputFile()
+    {
+        var file = (_txtOutputFile.Text ?? "").Trim();
+        Log.Info("asppath", $"Open log file '{file}'");
+
+        try
+        {
+            if (!File.Exists(file))
             {
-                e.SuppressKeyPress = true;
-                var txt = Clipboard.GetText();
-                if (!string.IsNullOrEmpty(txt))
+                MessageBox.Show(this, "Output file bestaat nog niet (nog geen missings gelogd).", "Open output",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = file,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            Log.Warn("asppath", $"OpenOutputFile failed: {ex.GetType().Name}: {ex.Message}\n{ex}");
+            MessageBox.Show(this, "Kon output file niet openen. Zie log (Alt+L).", "Open output",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private void OnPasteReplaceKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Control && e.KeyCode == Keys.V)
+        {
+            try
+            {
+                var txt = Clipboard.GetText() ?? "";
+                if (sender is TextBox tb)
                 {
                     tb.Text = txt;
                     tb.SelectionStart = tb.TextLength;
+                    tb.SelectionLength = 0;
+
+                    Log.Info("asppath", $"Paste-replace into textbox len={txt.Length}");
                 }
             }
-        };
+            catch (Exception ex)
+            {
+                Log.Warn("asppath", $"Paste-replace failed: {ex.GetType().Name}: {ex.Message}\n{ex}");
+            }
 
-        return tb;
-    }
-
-    private static Button MakeButton(string text, int width, EventHandler onClick)
-    {
-        var b = new Button { Text = text, Width = width };
-        b.Click += onClick;
-        return b;
-    }
-
-    private static Control BuildCard(string title, Control content)
-    {
-        var outer = new Panel
-        {
-            Dock = DockStyle.Fill,
-            Padding = new Padding(6, 4, 6, 6),
-            BorderStyle = BorderStyle.FixedSingle
-        };
-
-        var layout = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 2
-        };
-        layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-
-        var header = new Label
-        {
-            Text = title,
-            AutoSize = true,
-            Dock = DockStyle.Top,
-            Font = new Font(SystemFonts.DefaultFont, FontStyle.Bold),
-            Padding = new Padding(0, 0, 0, 4)
-        };
-
-        layout.Controls.Add(header, 0, 0);
-        layout.Controls.Add(content, 0, 1);
-
-        outer.Controls.Add(layout);
-        return outer;
-    }
-
-    private static string GetDefaultOutputFile()
-    {
-        // match your file-log location convention
-        var baseDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "StruxureGuard",
-            "Logs");
-
-        Directory.CreateDirectory(baseDir);
-
-        return Path.Combine(baseDir, "missing_asp_paths.txt");
-    }
-
-    private void OpenLogFile()
-{
-    try
-    {
-        Log.Info("asppath", $"CLICK Open log file '{_outputFile}'");
-
-        if (!File.Exists(_outputFile))
-        {
-            Log.Warn("asppath", $"Log file not found: '{_outputFile}'");
-            MessageBox.Show(this, "Logbestand bestaat nog niet. Doe eerst een check.", "Open log",
-                MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
+            e.SuppressKeyPress = true;
+            e.Handled = true;
         }
-
-        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-        {
-            FileName = _outputFile,
-            UseShellExecute = true
-        });
     }
-    catch (Exception ex)
-    {
-        Log.Warn("asppath", $"OpenLogFile failed: {ex.GetType().Name}: {ex.Message}\n{ex}");
-        MessageBox.Show(this, "Kon logbestand niet openen. Zie log (Alt+L).", "Open log",
-            MessageBoxButtons.OK, MessageBoxIcon.Warning);
-    }
-}
-
-private void OpenLogFolder()
-{
-    try
-    {
-        var folder = Path.GetDirectoryName(_outputFile) ?? "";
-        Log.Info("asppath", $"CLICK Open log folder '{folder}'");
-
-        if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
-        {
-            Log.Warn("asppath", $"Log folder not found: '{folder}'");
-            MessageBox.Show(this, "Logfolder bestaat niet.", "Open folder",
-                MessageBoxButtons.OK, MessageBoxIcon.Information);
-            return;
-        }
-
-        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-        {
-            FileName = folder,
-            UseShellExecute = true
-        });
-    }
-    catch (Exception ex)
-    {
-        Log.Warn("asppath", $"OpenLogFolder failed: {ex.GetType().Name}: {ex.Message}\n{ex}");
-        MessageBox.Show(this, "Kon folder niet openen. Zie log (Alt+L).", "Open folder",
-            MessageBoxButtons.OK, MessageBoxIcon.Warning);
-    }
-}
-
 }

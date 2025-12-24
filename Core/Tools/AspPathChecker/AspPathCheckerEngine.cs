@@ -107,7 +107,8 @@ public sealed class AspPathCheckerEngine
     public CheckResult CheckRows(
         List<AspPathRowDto> rows,
         IReadOnlyList<int> indicesToCheck,
-        string outputFile)
+        string outputFile,
+        string rootFolder)
     {
         if (indicesToCheck.Count == 0)
         {
@@ -115,12 +116,23 @@ public sealed class AspPathCheckerEngine
             return new CheckResult(rows, CheckedCount: 0, MissingCount: 0);
         }
 
-        EnsureOutputFolder(outputFile);
+        var root = (rootFolder ?? "").Trim();
+        var hasRoot = !string.IsNullOrWhiteSpace(root);
 
         int missing = 0;
+        int skippedDiskCheckNoRoot = 0;
 
         // Copy list so it’s “functional” (nice for testing)
         var updated = rows.ToList();
+
+        bool outputFolderEnsured = false;
+        void EnsureOutputIfNeeded()
+        {
+            if (outputFolderEnsured) return;
+            if (string.IsNullOrWhiteSpace(outputFile)) return;
+            EnsureOutputFolder(outputFile);
+            outputFolderEnsured = true;
+        }
 
         for (int k = 0; k < indicesToCheck.Count; k++)
         {
@@ -131,34 +143,110 @@ public sealed class AspPathCheckerEngine
             var r = updated[idx];
 
             var aspName = (r.AspName ?? "").Trim();
-            var fullPath = NormalizePath(r.Path);
+            var rawPath = NormalizePath(r.Path);
 
-            bool exists;
-            if (string.IsNullOrWhiteSpace(fullPath))
+            // Case 1: no match/path
+            if (string.IsNullOrWhiteSpace(rawPath))
             {
-                exists = false;
-                LogMissing(outputFile, aspName.Length > 0 ? aspName : "<GEEN ASP>", "<GEEN PATH GEVONDEN (GEEN MATCH)>");
+                // Keep semantic status: it’s a matching problem, not a disk problem
+                EnsureOutputIfNeeded();
+                if (!string.IsNullOrWhiteSpace(outputFile))
+                    LogMissing(outputFile, aspName.Length > 0 ? aspName : "<GEEN ASP>", "<GEEN PATH GEVONDEN (GEEN MATCH)>");
+
+                missing++;
+                updated[idx] = r with { Status = "Geen path gevonden (geen match)" };
+                continue;
+            }
+
+            // Case 2: EBO-like path + no root folder => do NOT mark missing on disk
+            if (!hasRoot && LooksLikeEboPath(rawPath))
+            {
+                skippedDiskCheckNoRoot++;
+                updated[idx] = r with { Status = "Match gevonden (niet gecontroleerd - geen rootmap)" };
+                continue;
+            }
+
+            // Case 3: disk check
+            var exists = PathExists(rawPath, root);
+
+            if (!exists)
+            {
+                EnsureOutputIfNeeded();
+                if (!string.IsNullOrWhiteSpace(outputFile))
+                    LogMissing(outputFile, aspName.Length > 0 ? aspName : "<GEEN ASP>", rawPath);
+
                 missing++;
             }
-            else
-            {
-                exists = PathExists(fullPath);
-                if (!exists)
-                {
-                    LogMissing(outputFile, aspName.Length > 0 ? aspName : "<GEEN ASP>", fullPath);
-                    missing++;
-                }
-            }
 
-            updated[idx] = r with
-            {
-                Status = exists ? "Bestaat" : "Ontbreekt (gelogd)"
-            };
+            updated[idx] = r with { Status = exists ? "Bestaat" : "Ontbreekt (gelogd)" };
         }
 
-        Log.Info("asppath", $"CheckRows done checked={indicesToCheck.Count} missing={missing} output='{outputFile}'");
+        if (!hasRoot && skippedDiskCheckNoRoot > 0)
+        {
+            Log.Warn("asppath",
+                $"Disk-check skipped for EBO paths because RootFolder is empty. skipped={skippedDiskCheckNoRoot}. " +
+                $"Tip: kies een rootmap zodat '/WAA-.../_Service' onder die map gecontroleerd wordt.");
+        }
+
+        Log.Info("asppath",
+            $"CheckRows done checked={indicesToCheck.Count} missing={missing} skippedNoRoot={skippedDiskCheckNoRoot} output='{outputFile}' root='{root}'");
+
         return new CheckResult(updated, CheckedCount: indicesToCheck.Count, MissingCount: missing);
     }
+
+    private static bool LooksLikeEboPath(string p)
+    {
+        var s = (p ?? "").Trim();
+        if (s.StartsWith("/"))
+            return true;
+
+        // Has forward slashes but is not a Windows drive path and not UNC
+        if (s.Contains('/') && !s.Contains(':') && !s.StartsWith(@"\\"))
+            return true;
+
+        return false;
+    }
+
+    private static string ToRelativeFsPath(string p)
+    {
+        var s = NormalizePath(p);
+        s = s.TrimStart('/', '\\');
+        s = s.Replace('/', Path.DirectorySeparatorChar);
+        return s;
+    }
+
+    private static bool PathExists(string rawPath, string rootFolder)
+    {
+        var p = NormalizePath(rawPath);
+        if (string.IsNullOrWhiteSpace(p))
+            return false;
+
+        var root = (rootFolder ?? "").Trim();
+        var hasRoot = !string.IsNullOrWhiteSpace(root);
+
+        if (LooksLikeEboPath(p))
+        {
+            var rel = ToRelativeFsPath(p);
+            if (hasRoot)
+            {
+                var candidate = Path.Combine(root, rel);
+                return File.Exists(candidate) || Directory.Exists(candidate);
+            }
+
+            // Relative to current working dir (rarely useful for WinForms, but safe fallback)
+            return File.Exists(rel) || Directory.Exists(rel);
+        }
+
+        // Non-EBO paths: if relative and root provided, combine
+        if (hasRoot && !Path.IsPathRooted(p))
+        {
+            var candidate = Path.Combine(root, p);
+            return File.Exists(candidate) || Directory.Exists(candidate);
+        }
+
+        return File.Exists(p) || Directory.Exists(p);
+    }
+
 
     private static List<string> SplitLines(string? text)
     {
